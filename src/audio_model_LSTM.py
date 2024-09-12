@@ -4,6 +4,9 @@ import torch.nn as nn
 
 
 class SimpleLSTMModel(nn.Module) :
+    """
+    简单LSTM模型
+    """
     def __init__(self, mel_bins=128, lstm_hidden_size=128, lstm_layers=2, dropout_rate=0.3) :
         super(SimpleLSTMModel, self).__init__()
 

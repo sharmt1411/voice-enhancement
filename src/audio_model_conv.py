@@ -4,6 +4,10 @@ import torch.nn.functional as F
 
 
 class BreathToSpeechModel(nn.Module) :
+    """
+    用于声学模型的深度卷积神经网络
+    把mel图当作图片处理，用深度卷积神经网络提取特征，然后用LSTM进行时间序列建模，最后用全连接层进行输出映射
+    """
     def __init__(self, input_channels=1, output_channels=1, mel_bins=128, lstm_hidden_size=128, lstm_layers=2,
                  dropout_rate=0.3) :
         super(BreathToSpeechModel, self).__init__()
