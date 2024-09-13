@@ -3,3 +3,6 @@ dist/
 build/
 *.egg-info/
 .venv/
+
+/test_data/
+/dataset/  # 后续可以添加数据集
