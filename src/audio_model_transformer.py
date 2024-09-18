@@ -68,8 +68,17 @@ class TransformerMelModel(nn.Module) :
         # 输出层将 d_model 映射回 mel_bins 维度
         self.output_linear = nn.Linear(d_model, mel_bins)
 
+        self.config = {
+            "mel": mel_bins,
+            "d": d_model,
+            "n_seq": seq_length,
+            "n_h": n_head,
+            "layers": num_decoder_layers,
+            "drop": dropout
+        }
+
     def forward(self, x) :
-        # x: 输入形状为 (batch_size, 时间帧数量seq_length, mel_bins)
+        # x: 输入形状为 (batch_size, 时间帧数量seq_length, mel_bins)，而mel图的shape为(batch_size， mel_bins， 时间帧数量)需要注意变换
         # 将 mel_bins 维度的输入映射到 d_model 维度
         x = self.input_linear(x)  # (batch_size, 时间帧数量, d_model)
         pos = self.position_embedding_table(torch.arange(x.shape[1]).to(x.device))  # (时间帧数量, d_model)

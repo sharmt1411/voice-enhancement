@@ -5,9 +5,10 @@ import librosa
 import librosa.display
 import matplotlib.pyplot as plt
 import soundfile as sf
-from scipy.signal import butter, sosfilt
+from scipy.signal import butter, sosfilt, correlate
 
-n_mel = 64  # 频谱图的通道数
+n_mel = 128  # 频谱图的通道数
+
 
 def load_audio(file_path, sr=16000):
     """加载音频文件，并将其重采样到指定的采样率"""
@@ -201,7 +202,80 @@ def audio_to_logmel_mel(audio, sr=16000, n_mels=64, fmax=8000):
     return log_mel_spectrogram, mel_spectrogram
 
 
-def plot_mel_spectrogram_list(mel_list, sr=16000, n_mels=32, fmax=8000):
+def audio_to_mel(audio, sr=16000, n_mels=64, fmax=8000):
+    # 计算Mel频谱
+    mel_spectrogram = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=n_mels, fmax=fmax)
+    return mel_spectrogram
+
+
+def mel_align(mel1, mel2):
+    """
+    对两个Mel频谱图进行对齐，使得它们的中心时间位置相同。
+    1.用长序列去对齐短序列。
+    2.根据对齐情况，截断尾部，保证尾部对齐。
+    3.从对齐的尾部开始，截断头部，保证头部对齐。
+    :param mel1: 第一个Mel频谱图, (n_mel, 时间维度)
+    :param mel2: 第二个Mel频谱图, (n_mel, 时间维度)
+    :return: 对齐后的两个Mel频谱图
+    """
+    # print("准备对齐，mel1", mel1, "mel2", mel2)
+    len_mel1 = mel1.shape[1]  # (n_mel, 时间维度)
+    len_mel2 = mel2.shape[1]  # (n_mel, 时间维度)
+
+    # print("mel1数值范围", np.min(mel1), np.max(mel1),mel1[10000:10005])
+    if len_mel1 > len_mel2:
+        # 选择最长的Mel图，对齐较短的Mel图
+        aligned_mel2, aligned_mel1 = mel_align(mel2, mel1)
+        return aligned_mel1, aligned_mel2
+    # print("mel1.mean(axis=0)", mel1.mean(axis=0), "mel2.mean(axis=0)", mel2.mean(axis=0))
+
+    align_shape = True  # 是否对齐形状
+    if align_shape:
+        max1 = np.max(np.abs(mel1))
+        max2 = np.max(np.abs(mel2))
+        # 使用mel形状的进行对齐，即将mel图替换为1，0图
+        mel1_mask = (mel1 > max1/1000).astype(np.float32)  # 阈值设置
+        mel2_mask = (mel2 > max2/1000).astype(np.float32)  # 阈值设置
+        corr = correlate(mel1_mask.sum(axis=0), mel2_mask.sum(axis=0))  # 长度为len(A) + len(B)-1,将b在a上滑动，并逐步计算两者的点积，结果是每个偏移位置的相关性值。
+    else:
+        # 计算两个 Mel 图之间的交叉相关
+        # 由于mel图频率分布差异，所以不能平均后测试相关，待测试？而是直接求和后测试相关
+        corr = correlate(mel1[64:128].sum(axis=0), mel2[64:128].sum(axis=0))  # 长度为len(A) + len(B)-1,将b在a上滑动，并逐步计算两者的点积，结果是每个偏移位置的相关性值。
+    # print("corr", corr)
+    # 找到最大相关值的位置（对应的时间偏移量）
+    align = np.argmax(corr)+1  # 最大相关值的位置（对应B尾部在A头部上的的时间偏移量,从1开始）
+    shift = align - len_mel1  # 尾端对齐的偏移量，>0表示B在A右侧，<0表示B在A左侧
+    if abs(shift) > 6:
+        # 防止出现偏移过大导致的对齐错误，一般为（128，50）形状，且音频收集预对齐过，所以偏移量不会超出太多
+        print("mel_align: 无法对齐，shift偏移量过大，请检查输入")
+        shift = 0  # 置零，相当于右对齐
+    if shift > 0:
+        mel1_aligned = mel1
+        mel2_aligned = mel2[:, :-shift]
+    elif shift < 0:
+        mel1_aligned = mel1[:, :align]
+        mel2_aligned = mel2
+    else:
+        mel1_aligned = mel1
+        mel2_aligned = mel2
+
+    # 截断到相同长度
+    min_length = min(mel1_aligned.shape[1], mel2_aligned.shape[1])
+    mel1_aligned = mel1_aligned[:, -min_length:]
+    mel2_aligned = mel2_aligned[:, -min_length:]
+
+    # print("对齐后mel1", mel1_aligned, "mel2", mel2_aligned, "shift", shift)
+
+    show = False
+    if show:
+        mel_list = [(mel1_aligned, 'breath_before_align'), (mel2_aligned, 'normal_before_align'), (mel1, 'breath'),
+                    (mel2, 'normal')]
+        plot_mel_spectrogram_list(mel_list, is_log=False)
+        print("Mel频谱图绘制完成")
+    return mel1_aligned, mel2_aligned
+
+
+def plot_mel_spectrogram_list(mel_list, sr=16000, n_mels=128, fmax=8000, is_log=True):
     """
     绘制Mel频谱图
 
@@ -211,10 +285,14 @@ def plot_mel_spectrogram_list(mel_list, sr=16000, n_mels=32, fmax=8000):
     - n_mels: Mel滤波器的数量（默认32）
     - fmax: Mel滤波器的最高频率（默认8000 Hz）
     """
+    if not is_log:
+        log_mel_list = [(librosa.amplitude_to_db(mel_spectrogram, ref=np.max), method) for mel_spectrogram, method in mel_list]
+    else:
+        log_mel_list = mel_list
     # 绘制Mel频谱图
-    plt.figure(figsize=(10, 4*len(mel_list)))
-    for i, (log_mel_spectrogram, method) in enumerate(mel_list):
-        plt.subplot(len(mel_list), 1, i+1)
+    plt.figure(figsize=(10, 4*len(log_mel_list)))
+    for i, (log_mel_spectrogram, method) in enumerate(log_mel_list):
+        plt.subplot(len(log_mel_list), 1, i + 1)
         librosa.display.specshow(log_mel_spectrogram, sr=sr, x_axis='time', y_axis='mel', fmax=fmax)
         plt.title(f'Mel spectrogram-{method}')
         plt.colorbar(format='%+2.0f dB')
@@ -223,67 +301,76 @@ def plot_mel_spectrogram_list(mel_list, sr=16000, n_mels=32, fmax=8000):
 
 
 if __name__ == "__main__":
-    # 请替换为你自己的音频文件路径
-    audio_path = "../test_data/example-breath.wav"
-    y, sr = librosa.load(audio_path)
-    print("y", y.shape, sr, "\n", y[8000:8004])
 
-    # 音频处理主函数
-    # print("load_start_time",datetime.now())
-    # # 调用预处理函数
-    # magnitude, phase, sr = preprocess_audio(audio_file_path)
-    # print("Magnitude shape:", magnitude.shape)
-    # print("Phase shape:", phase.shape)
-    #
-    # # 使用plt绘制图形
-    # plt.figure(figsize=(10, 4))
-    # librosa.display.specshow(magnitude, sr=sr, x_axis='time', y_axis='log')
-    # plt.colorbar(format='%+2.0f dB')
-    # plt.title('Log-frequency power spectrogram')
-    # plt.tight_layout()
-    # plt.show()
+    def test_audio_denoise():
+        # 请替换为你自己的音频文件路径
+        audio_path = "../test_data/example-breath.wav"
+        y, sr = librosa.load(audio_path)
+        print("y", y.shape, sr, "\n", y[8000:8004])
 
-    print("测试各个降噪方法用时--------------------------------------------")
-    method = ['lms', 'noise_reduction', 'highpass', 'fft']
-    y, sr = librosa.load(audio_path)
-    import time
-    for m in method:
-        print("测试方法：", m, "开始-")
-        start_time = time.time()
-        audio_denoise_result = audio_denoise(y, method=[m])
-        print("测试方法：", m, "结束，用时：", time.time() - start_time)
+        # 音频处理主函数
+        # print("load_start_time",datetime.now())
+        # # 调用预处理函数
+        # magnitude, phase, sr = preprocess_audio(audio_file_path)
+        # print("Magnitude shape:", magnitude.shape)
+        # print("Phase shape:", phase.shape)
+        #
+        # # 使用plt绘制图形
+        # plt.figure(figsize=(10, 4))
+        # librosa.display.specshow(magnitude, sr=sr, x_axis='time', y_axis='log')
+        # plt.colorbar(format='%+2.0f dB')
+        # plt.title('Log-frequency power spectrogram')
+        # plt.tight_layout()
+        # plt.show()
 
-    print("测试各个降噪方法音频质量及恢复状态--------------------------------------------")
-    """
-    测试各个降噪方法音频质量及恢复状态
-    先降噪，保存降噪音频为denoise_audio_(method).wav，
-    再转换为mel图，并使用Mel谱图恢复，保存重建音频为reconstructed_audio.wav
-    每种方法mel图包括原始图，降噪后，重建图3种
-    """
-    method = ['lms', 'noise_reduction', 'highpass', 'fft']
-    # 测试所有组合
-    import itertools
-    n_mel = 32
-    log_mel_original, _ = audio_to_logmel_mel(y, sr=sr, n_mels=n_mel, fmax=8000)
-    mel_list = [(log_mel_original, "_original")]
-    for r in range(1, len(method) + 1) :
-        combinations = list(itertools.combinations(method, r))
-        for combo in combinations :
-            print("测试方法：", combo, "开始--------------------------------------------------")
-            y, sr = librosa.load(audio_path)
-            audio_denoise_result = audio_denoise(y, method=combo)
-            log_mel_spectrogram, mel_spectrogram = audio_to_logmel_mel(y, sr=sr, n_mels=n_mel, fmax=8000)
-            mel_list.append((log_mel_spectrogram, str(combo)+"_denoise"))
-            print("mel_spectrogram_shape", log_mel_spectrogram.shape)
-            audio_reconstructed = mel_to_audio(mel_spectrogram, sr=sr)
-            sf.write(f'../test_data/reconstructed_audio{str(combo)}.wav', audio_reconstructed, sr)
-            log_mel_spectrogram_reconstructed, _ = audio_to_logmel_mel(audio_reconstructed, sr=sr, n_mels=32, fmax=8000)
-            mel_list.append((log_mel_spectrogram_reconstructed, str(combo)+"_reconstructed"))
+        print("测试各个降噪方法用时--------------------------------------------")
+        method = ['lms', 'noise_reduction', 'highpass', 'fft']
+        y, sr = librosa.load(audio_path)
+        import time
+        for m in method:
+            print("测试方法：", m, "开始-")
+            start_time = time.time()
+            audio_denoise_result = audio_denoise(y, method=[m])
+            print("测试方法：", m, "结束，用时：", time.time() - start_time)
 
-    plot_mel_spectrogram_list(mel_list, sr=sr, n_mels=32, fmax=8000)
-    print("测试结束-")
+        print("测试各个降噪方法音频质量及恢复状态--------------------------------------------")
+        """
+        测试各个降噪方法音频质量及恢复状态
+        先降噪，保存降噪音频为denoise_audio_(method).wav，
+        再转换为mel图，并使用Mel谱图恢复，保存重建音频为reconstructed_audio.wav
+        每种方法mel图包括原始图，降噪后，重建图3种
+        """
+        method = ['lms', 'noise_reduction', 'highpass', 'fft']
+        # 测试所有组合
+        import itertools
+        n_mel = 32
+        log_mel_original, _ = audio_to_logmel_mel(y, sr=sr, n_mels=n_mel, fmax=8000)
+        mel_list = [(log_mel_original, "_original")]
+        for r in range(1, len(method) + 1) :
+            combinations = list(itertools.combinations(method, r))
+            for combo in combinations :
+                print("测试方法：", combo, "开始--------------------------------------------------")
+                y, sr = librosa.load(audio_path)
+                audio_denoise_result = audio_denoise(y, method=combo)
+                log_mel_spectrogram, mel_spectrogram = audio_to_logmel_mel(y, sr=sr, n_mels=n_mel, fmax=8000)
+                mel_list.append((log_mel_spectrogram, str(combo)+"_denoise"))
+                print("mel_spectrogram_shape", log_mel_spectrogram.shape)
+                audio_reconstructed = mel_to_audio(mel_spectrogram, sr=sr)
+                sf.write(f'../test_data/reconstructed_audio{str(combo)}.wav', audio_reconstructed, sr)
+                log_mel_spectrogram_reconstructed, _ = audio_to_logmel_mel(audio_reconstructed, sr=sr, n_mels=32, fmax=8000)
+                mel_list.append((log_mel_spectrogram_reconstructed, str(combo)+"_reconstructed"))
 
+        plot_mel_spectrogram_list(mel_list, sr=sr, n_mels=32, fmax=8000)
+        print("测试结束-")
 
+    def test_align_mel():
+
+        mel_align(np.array([[1, 2, 0],]), np.array([[0, 2, 3, 0], ]))
+        mel_align(np.array([[1, 2, 0], ]), np.array([[0, 0, 2, 3, 0], ]))
+        mel_align(np.array([[1, 2, 0], ]), np.array([[0, 2, 3], ]))
+        mel_align(np.array([[0, 1, 2, 0], ]), np.array([[0, 2, 3, 0], ]))
+
+    test_align_mel()
 
 
 

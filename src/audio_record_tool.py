@@ -6,7 +6,7 @@ import numpy as np
 import threading
 import os
 
-silence_threshold = 1000  # 可以根据需要调整此值,30000为最大音量
+silence_threshold = 500  # 可以根据需要调整此值,30000为最大音量
 
 
 class AudioRecorder:
@@ -43,10 +43,12 @@ class AudioRecorder:
             os.makedirs(self.dataset_dir)
 
         # 读取dataset目录下已有以audio_normal开头的文件数量
-        self.start_index = len([name for name in os.listdir(self.dataset_dir) if name.startswith('audio_normal')])
-        print("已有正常音频文件，起始编号：", self.start_index)
-        self.normal_index = self.start_index
-        self.breath_index = self.start_index
+        indices = [int(name.split("_")[-1].split(".")[0]) for name in os.listdir(self.dataset_dir) if name.startswith('audio_normal')]
+        self.start_index = max(indices, default=0)
+        print(indices)
+        print("已有正常音频文件，起始编号：", self.start_index+1)
+        self.normal_index = int(self.start_index)+1
+        self.breath_index = int(self.start_index)+1
 
     def start_recording(self, event):
         if self.is_recording.is_set():
