@@ -1,3 +1,4 @@
+import wave
 from datetime import datetime
 
 import numpy as np
@@ -275,6 +276,15 @@ def mel_align(mel1, mel2):
     return mel1_aligned, mel2_aligned
 
 
+def save_audio(audio, sr, file_path):
+    """
+    保存音频文件
+    """
+    sf.write(file_path, audio, sr)
+
+    print(f"成功保存音频文件: {file_path}")
+
+
 def plot_mel_spectrogram_list(mel_list, sr=16000, n_mels=128, fmax=8000, is_log=True):
     """
     绘制Mel频谱图
@@ -298,6 +308,28 @@ def plot_mel_spectrogram_list(mel_list, sr=16000, n_mels=128, fmax=8000, is_log=
         plt.colorbar(format='%+2.0f dB')
     plt.tight_layout()
     plt.show()
+
+
+# mel图数据分布统计直方图
+def plot_mel_hist(mel_list):
+    """
+    绘制Mel频谱图的直方图
+    参数:
+    - mel_list: 输入的Mel频谱图列表（log-mel图，message），如(log-mel，”lms_denoise")
+    """
+    plt.figure(figsize=(10, 4*len(mel_list)))
+    for i, (mel_spectrogram, message) in enumerate(mel_list):
+        plt.subplot(len(mel_list), 1, i + 1)
+        plt.hist(mel_spectrogram.flatten(), bins=2000, density=True, alpha=0.5, label=message)
+        plt.xlim(-1, 1)  # 设置X轴的最小值和最大值
+        plt.grid()  # 显示网格
+        plt.xlabel('value')
+        plt.ylabel('frequency')
+        plt.legend(loc='upper right')
+        plt.title(f'Mel spectrogram-{message} Histogram')
+    plt.tight_layout()
+    plt.show()
+
 
 
 if __name__ == "__main__":

@@ -71,7 +71,7 @@ class TransformerMelModel(nn.Module) :
         self.config = {
             "mel": mel_bins,
             "d": d_model,
-            "n_seq": seq_length,
+            "seq_len": seq_length,
             "n_h": n_head,
             "layers": num_decoder_layers,
             "drop": dropout

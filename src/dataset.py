@@ -24,11 +24,12 @@ f_max = 8000
 
 
 class BreathToSpeechDataset(Dataset):
-    def __init__(self, dataset_path, transform=None, element_size=64):
+    def __init__(self, dataset_path, transform=False, element_size=64):
         self.element_size = element_size
         self.dataset_path = dataset_path
         self.transform = transform
         self.file_pairs = self._load_file_pairs()
+        self.stats = {}
         self.breath_mel_data = np.array([])
         self.normal_mel_data = np.array([])
         self._load_audio_data()
@@ -87,10 +88,6 @@ class BreathToSpeechDataset(Dataset):
                 plot_mel_spectrogram_list(mel_list, target_sr, num_mel, fmax=f_max, is_log=False)
                 print("Mel频谱图绘制完成")
 
-            if self.transform :
-                breath_mel = self.transform(breath_mel)
-                normal_mel = self.transform(normal_mel)
-
             self.breath_mel_data = np.hstack((self.breath_mel_data, breath_mel)) if self.breath_mel_data.size else breath_mel
             self.normal_mel_data = np.hstack((self.normal_mel_data, normal_mel)) if self.normal_mel_data.size else normal_mel
             # print(f"第{i+1}个音频处理完成,目前数据形状，呼吸{self.breath_mel_data.shape}, 正常{self.normal_mel_data.shape}")
@@ -99,7 +96,13 @@ class BreathToSpeechDataset(Dataset):
         self.normal_mel_data = self.normal_mel_data.transpose()  # 转换为(time, dim)
         self.breath_mel_data = torch.from_numpy(self.breath_mel_data).float()
         self.normal_mel_data = torch.from_numpy(self.normal_mel_data).float()
-        print(f"------------------------------------------------\n数据集加载完成，呼吸{self.breath_mel_data.shape}, 正常{self.normal_mel_data.shape}")
+        # 统计均值和方差
+        self.stats = {'mean_breath': self.breath_mel_data.mean(), 'std_breath': self.breath_mel_data.std(),
+                      'mean_normal': self.normal_mel_data.mean(), 'std_normal': self.normal_mel_data.std()}
+        print(f"------------------------------------------------\n数据集加载完成，呼吸{self.breath_mel_data.shape}, "
+              f"正常{self.normal_mel_data.shape}")
+        print(f"呼吸音频均值{self.stats['mean_breath']}, 方差{self.stats['std_breath']}")
+        print(f"正常音频均值{self.stats['mean_normal']}, 方差{self.stats['std_normal']}")
 
     def __len__(self):
         return self.breath_mel_data.shape[0]//self.element_size
@@ -110,9 +113,20 @@ class BreathToSpeechDataset(Dataset):
         end = start + self.element_size
         breath_mel = self.breath_mel_data[start:end]
         normal_mel = self.normal_mel_data[start:end]
-        return breath_mel, normal_mel
+        if self.transform :
+            breath_mel = self._normalize(breath_mel, is_breath=True)
+            normal_mel = self._normalize(normal_mel, is_breath=False) # 输入必须标准化，输出可以测试不标准化
+        return breath_mel, normal_mel  # （time，num_mel）
         # 加载呼吸音频和正常音频
 
+    def _normalize(self, mel, is_breath=True):
+        """
+        标准化数据，使得均值为0，方差为1
+        """
+        if is_breath:
+            return (mel - self.stats['mean_breath']) / self.stats['std_breath']
+        else:
+            return (mel - self.stats['mean_normal']) / self.stats['std_normal']
 
 
 if __name__ == '__main__':

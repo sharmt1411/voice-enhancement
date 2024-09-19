@@ -7,7 +7,7 @@ class SimpleLSTMModel(nn.Module) :
     """
     简单LSTM模型
     """
-    def __init__(self, mel_bins=128, lstm_hidden_size=128, lstm_layers=2, dropout_rate=0.3) :
+    def __init__(self, mel_bins=128, lstm_hidden_size=128, lstm_layers=2, dropout_rate=0.1) :
         super(SimpleLSTMModel, self).__init__()
 
         # LSTM用于时间序列建模
@@ -16,6 +16,14 @@ class SimpleLSTMModel(nn.Module) :
 
         # 全连接层将LSTM输出映射到Mel频带数
         self.fc = nn.Linear(lstm_hidden_size * 2, mel_bins)
+
+        # 参数记录，用于后期模型保存
+        self.config = {
+            "mel": mel_bins,
+            "hsize": lstm_hidden_size,
+            "layers": lstm_layers,
+            "drop": dropout_rate
+        }
 
     def forward(self, x) :
         # x: 输入形状为 (batch_size, 时间帧数量, mel_bins)
@@ -29,21 +37,22 @@ class SimpleLSTMModel(nn.Module) :
         return output
 
 
-# 示例输入
-batch_size = 1
-time_frames = 128
-mel_bins = 128
+if __name__ == '__main__' :
+    # 示例输入
+    batch_size = 1
+    time_frames = 128
+    mel_bins = 128
 
-# 实例化模型
-model = SimpleLSTMModel(mel_bins=mel_bins)
+    # 实例化模型
+    model = SimpleLSTMModel(mel_bins=mel_bins)
 
-# 打印模型参数数量
-print("模型参数数量:", sum(p.numel() for p in model.parameters() if p.requires_grad))
+    # 打印模型参数数量
+    print("模型参数数量:", sum(p.numel() for p in model.parameters() if p.requires_grad))
 
-# 输入张量 (batch_size, 时间帧数量, mel_bins)
-x = torch.randn(batch_size, time_frames, mel_bins)
+    # 输入张量 (batch_size, 时间帧数量, mel_bins)
+    x = torch.randn(batch_size, time_frames, mel_bins)
 
-# 前向传播
-output = model(x)
+    # 前向传播
+    output = model(x)
 
-print("输出形状:", output.shape)  # 输出形状应为 (1, 128, 128)
+    print("输出形状:", output.shape)  # 输出形状应为 (1, 128, 128)

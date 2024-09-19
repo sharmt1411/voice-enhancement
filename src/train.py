@@ -115,7 +115,7 @@ def evaluate(model, dataset, eva_num=10):
 def train(model_path, dataset, load_model=False, model_type='transformer'):
     if model_type == 'transformer':
         model = TransformerMelModel(seq_length=element_size, d_model=64, n_head=2)
-    elif model_type == 'LSTM':
+    elif model_type == 'lstm':
         model = SimpleLSTMModel()
     elif model_type == 'conv':
         model = BreathToSpeechModel(seq_len=element_size)
@@ -141,7 +141,7 @@ def train(model_path, dataset, load_model=False, model_type='transformer'):
     # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
     # 加载训练数据集,并划分训练集和验证集
-    dataset = BreathToSpeechDataset(dataset_path='../dataset', element_size=element_size)
+    dataset = BreathToSpeechDataset(dataset_path='../dataset', element_size=element_size, transform= is_transform)
     total_size = len(dataset)
     train_size = int(total_size * train_ratio)
     val_size = total_size - train_size
@@ -191,6 +191,7 @@ def train(model_path, dataset, load_model=False, model_type='transformer'):
     # 保存模型
     torch.save(model.state_dict(), os.path.join(
         save_path, f'model_{model_type}_{params}_{str_config}.pth'))
+    print(f'Model saved to {save_path}')
 
     # 绘制损失曲线
     import matplotlib.pyplot as plt
@@ -224,14 +225,17 @@ if __name__ == '__main__':
     train_ratio = 0.9  # 90% 用作训练集
     val_ratio = 0.1  # 10% 用作验证集
 
-    element_size = 64  # 输入数据的长度
+    # 调整参数
+    element_size = 24  # 输入数据的长度,conv64 transformer24 lstm不需要设置
+    model_type = 'lstm'  # 选择模型类型
+    is_transform = True  # 是否对dataset中的训练数据进行标准化变换
 
-    load_model = True  # 是否加载已训练模型
+    load_model = False  # 是否加载已训练模型
     model_name = "model_conv_701921__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.1.pth"
 
     torch.manual_seed(1337)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f'Using device: {device}')
 
-    train(model_path=None, dataset=None, load_model=load_model, model_type='conv')
+    train(model_path=None, dataset=None, load_model=load_model, model_type=model_type)
 
