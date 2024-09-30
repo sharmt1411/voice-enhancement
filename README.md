@@ -12,6 +12,14 @@
 模型使用conv+conv+conv+lstm+upconv+upconv+upconv实现，数据量大概采集10分钟，预估增大数据集后，参数量仍可减少
 一次处理 序列（帧）长度64，在mel图以128hop转换时，对应16K采样率大概0.5s转换一次，仍有优化空间
 
+### 文件说明
+
+src/train 模型训练脚本
+src/test-case 测试模型效果的脚本
+src/audio_model 模型设计文件
+src/dataset 数据集加载文件
+
+
 ### 后续计划
 
 优化延时
