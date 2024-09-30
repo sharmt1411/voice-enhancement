@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import init
+import torch.nn.functional as F
 
 
 # 实现带因果遮罩自注意力的Transformer模型块
@@ -9,7 +10,7 @@ class TransformerBlock(nn.Module) :
         super(TransformerBlock, self).__init__()
 
         # 多头注意力层
-        self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_head, dropout=dropout)
+        self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_head, dropout=dropout, batch_first=True)
         self.proj = nn.Linear(d_model, d_model)
         ff_dim = 4 * d_model
         # 前向传播网络（FFN）
@@ -41,8 +42,11 @@ class TransformerBlock(nn.Module) :
 
     def forward(self, x) :
         x_norm = self.layer_norm1(x)  # 层归一化
+        # print("TransformerBlock输入:", x_norm.shape)  # 1, 64, 256
         # 多头自注意力
-        attn_output, _ = self.self_attn(x_norm, x_norm, x_norm,attn_mask=self.causal_mask, is_causal=True)
+        attn_output, _ = self.self_attn(x_norm, x_norm, x_norm, is_causal=False)
+        # attn_output, _ = self.self_attn(x_norm, x_norm, x_norm, attn_mask=self.causal_mask, is_causal=False)
+        # print("多头自注意力输出:", attn_output.shape)
         proj_output = self.proj(attn_output)  # 线性变换
         # 残差连接和层归一化
         x = x + self.dropout(proj_output)
@@ -58,7 +62,7 @@ class TransformerBlock(nn.Module) :
 
 
 class TransformerMelModel(nn.Module) :
-    def __init__(self, mel_bins=128, d_model=256, seq_length=128, n_head=8, num_decoder_layers=4, dropout=0.1) :
+    def __init__(self, mel_bins=128, d_model=64, seq_length=64, n_head=2, num_decoder_layers=8, dropout=0.2) :
         super(TransformerMelModel, self).__init__()
         self.position_embedding_table = nn.Embedding(seq_length, d_model)
         self.blocks = nn.Sequential(*[TransformerBlock(d_model, n_head, seq_length, dropout)
@@ -81,12 +85,17 @@ class TransformerMelModel(nn.Module) :
         # x: 输入形状为 (batch_size, 时间帧数量seq_length, mel_bins)，而mel图的shape为(batch_size， mel_bins， 时间帧数量)需要注意变换
         # 将 mel_bins 维度的输入映射到 d_model 维度
         x = self.input_linear(x)  # (batch_size, 时间帧数量, d_model)
+        # print("输入形状:", x.shape)
         pos = self.position_embedding_table(torch.arange(x.shape[1]).to(x.device))  # (时间帧数量, d_model)
+        # print("位置编码:", pos.shape)
         x = x + pos  # (batch_size, 时间帧数量, d_model)
-        x = x.permute(1, 0, 2)  # (时间帧数量, batch_size, d_model)
-        x = self.blocks(x)  # (时间帧数量, batch_size, d_model)
-        x = x.permute(1, 0, 2)  # (batch_size, 时间帧数量, d_model)
-        x = self.output_linear(x)  # (时间帧数量, batch_size, mel_bins)
+        # print("位置编码后:", x.shape)
+        """此处注意，默认多头注意力序列长度，batchsize，dim形状"""
+        x = self.blocks(x)  # (batch_size,时间帧数量, d_model)
+        # print("TransformerBlock输出:", x.shape)
+
+        x = F.relu(self.output_linear(x))  # (时间帧数量, batch_size, mel_bins)
+        # print("输出形状:", x.shape)
         return x
 
     def custom_init(self, m):
@@ -101,18 +110,18 @@ if __name__ == '__main__':
 
     # 模型参数设置
     d_model=256
-    n_head=8
+    n_head=4
     num_decoder_layers=4
-    dropout=0.1
+    dropout=0.2
 
     # 输入
     batch_size = 1
-    time_frames = 128
+    time_frames = 64
     mel_bins = 128
     torch.manual_seed(0)  # 设置随机种子
 
     # 实例化模型
-    model = TransformerMelModel(mel_bins=mel_bins)
+    model = TransformerMelModel(mel_bins=mel_bins,seq_length=time_frames,d_model=d_model,n_head=n_head,num_decoder_layers=num_decoder_layers,dropout=dropout)
     # 初始化模型参数权重
     model.apply(model.custom_init)
 
