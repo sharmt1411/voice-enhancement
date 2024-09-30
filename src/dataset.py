@@ -152,23 +152,23 @@ class BreathToSpeechDataset(Dataset):
 
         else:
             # 取logmel作为输入
-            print("-----------------------------------------------------\n"
-                  "m-dataset-input_mel.min", mel.min().item(), "mel.max()", mel.max().item())
+            # print("-----------------------------------------------------\n"
+            #       "m-dataset-input_mel.min", mel.min().item(), "mel.max()", mel.max().item())
             if is_breath:
-                print("is_breath")
+                # /print("is_breath")
                 mel = librosa.amplitude_to_db(mel, ref= self.stats['max-breath'].item())
             else:
-                print("not is_breath")
+                # print("not is_breath")
                 mel = librosa.amplitude_to_db(mel, ref= self.stats['max-normal'].item(), amin=1e-5)
-            print("m-dataset-mel_log_db,mel.min", mel.min(), "mel.max()", mel.max())
+            # print("m-dataset-mel_log_db,mel.min", mel.min(), "mel.max()", mel.max())
             min_val = -70
             max_val = 0
             mel_clip = np.clip(mel, min_val, max_val)
             mel_norm = (mel_clip - min_val) / (max_val - min_val)
 
-            print("m-dataset-mel_log_clip_norm.min", mel_norm.min(), "mel_norm.max()", mel_norm.max())
-            mel_restore = librosa.db_to_amplitude(mel_norm * (max_val - min_val) + min_val, ref= self.stats['max-breath'].item())
-            print("m-dataset-mel_log_clip_norm_restore.min", mel_restore.min(),"mel_restore.max()", mel_restore.max())
+            # print("m-dataset-mel_log_clip_norm.min", mel_norm.min(), "mel_norm.max()", mel_norm.max())
+            # mel_restore = librosa.db_to_amplitude(mel_norm * (max_val - min_val) + min_val, ref= self.stats['max-breath'].item())
+            # print("m-dataset-mel_log_clip_norm_restore.min", mel_restore.min(),"mel_restore.max()", mel_restore.max())
             return torch.from_numpy(mel_norm)
 
 
