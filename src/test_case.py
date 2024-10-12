@@ -97,7 +97,7 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
     if transform and is_norm:
         mel_input_log_std = mel_input/50  # 线性归一化
     elif transform and not is_norm:
-        mel_input_log = librosa.amplitude_to_db(mel_input, ref=50)
+        mel_input_log = librosa.amplitude_to_db(mel_input, ref=130)
         mel_input_log_clip = np.clip(mel_input_log, min_val, 0)
         print(f"mel_input_log.shape:{mel_input_log.shape}, 最大值:{np.max(mel_input_log)}, 最小值:{np.min(mel_input_log)}")
         mel_input_log_std = (mel_input_log_clip - min_val) / (max_val - min_val)
@@ -421,7 +421,7 @@ if __name__ == '__main__':
     max_val = 0
     ref_normal =130
     # threshold = ref_normal * 10 ** (0.5 * min_val / 10) * 1.025
-    threshold = 130 * 10 ** (0.5 * -60 / 10) * 1.025
+    threshold = 130 * 10 ** (0.5 * -65 / 10) * 1.025
     print("threshold:", threshold)
     if "test_testset" in to_test:
         print("测试测试集--------------------------------------------------")
