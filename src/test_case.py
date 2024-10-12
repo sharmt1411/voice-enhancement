@@ -31,81 +31,7 @@ buffer_queue = queue.Queue()
 processed_queue = queue.Queue()
 
 
-def audio_callback(in_data, frame_count, time_info, status):
-    """
-    pyaudio.PyAudio()音频流stream回调函数
-    存储音频数据到缓冲区进行处理
-    """
-    # 将音频数据放入缓冲区
-    buffer_queue.put(in_data)
-    return in_data, pyaudio.paContinue
 
-
-def audio_consumer():
-    """
-    消费者线程，用于处理缓冲区音频数据，
-    处理逻辑在此函数中实现，
-    并将处理后的数据放入处理队列
-    需要配合consumer_thread线程一起使用
-    """
-    i = 0
-    while True:
-        # 从缓冲区获取音频数据进行处理
-        data = buffer_queue.get()
-        if data is None:
-            break
-        # 这里可以添加音频处理逻辑
-        # processed_data = audio_process(data)
-        # processed_queue.put(processed_data)
-        print("Processing audio data..."+str(i))
-        i += 1
-
-
-def start_audio_stream(audio=None):
-    """
-    启动麦克风音频流输入，并启动消费者线程
-    """
-    if audio is None:
-        # 初始化PyAudio
-        audio = pyaudio.PyAudio()
-
-    # 打开音频流
-    stream = audio.open(format=FORMAT,
-                        channels=CHANNELS,
-                        rate=RATE,
-                        input=True,
-                        frames_per_buffer=CHUNK,
-                        stream_callback=audio_callback)
-
-    # 创建并启动消费者线程，用于处理缓冲区中的音频数据
-    consumer_thread = threading.Thread(target=audio_consumer)
-    consumer_thread.start()
-
-    try:
-        # 开始音频流
-        print("Recording...")
-        stream.start_stream()
-
-        # 运行10s后停止
-
-        # time.sleep(10)
-        # stream.stop_stream()
-
-        # 持续运行直到用户停止
-        while stream.is_active():
-            time.sleep(0.5)
-
-    except KeyboardInterrupt:
-        # 用户停止录音
-        stream.stop_stream()
-
-    finally:
-        # 关闭音频流和PyAudio
-        print("Stopping...")
-        buffer_queue.put(None)  # 发送停止信号到消费者线程
-        consumer_thread.join()
-        stream.close()
-        audio.terminate()
 
 
 def test_audio_model_process(model, model_path, save_path, model_name, transform, is_norm, model_type, n_fft, hop_length, element_size=64, std_out=False):
@@ -144,6 +70,7 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
     # normal_std = 3.082866907119751
     # 读取音频数据
     audio_input, sr = load_audio(test_data_path, sr=16000)
+    print("audio_input.shape:", audio_input.shape, "sr:", sr, "max:", audio_input.max(), "min:", audio_input.min())  # (16000,)
     if audio_input.shape[0] > 55000:
         print("超过3s，截取前3s，audio_input.shape:", audio_input.shape)
         audio_input = audio_input[20000:68000]
@@ -189,6 +116,7 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
         audio_input_tensor = torch.from_numpy(mel_input_log_std).permute(1, 0).unsqueeze(0).float()
         print("mel_tensor.shape:", audio_input_tensor.shape)  # torch.Size([1, 108, 128])
         output_log_std = None
+        time_start = time.time()
         for i in range((audio_input_tensor.shape[1] // model_config["seq_len"]) + 1):
             input_seq = audio_input_tensor[:, i * model_config["seq_len"] : min(audio_input_tensor.shape[1], (i + 1) * model_config["seq_len"]), :]
 
@@ -204,6 +132,8 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
                 output_log_std = predict
             else:
                 output_log_std = torch.cat((output_log_std, predict), dim=1)
+        time_end = time.time()
+        print(">>>>>>>>>>>模型推理时间:", time_end - time_start)
         print("output.shape:", output_log_std.shape)
 
         output_log_std = output_log_std.cpu().numpy()
@@ -453,7 +383,10 @@ if __name__ == '__main__':
         lstm_layers = int(model_name.split('layers_')[1].split('_')[0])
         print("lstm_layers:", lstm_layers)
     elif model_type == 'conv':
-        model_name = 'model_conv_886529__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
+        model_name = 'model_1010noise-dataset-2gru_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'   # 最佳
+        # model_name = 'model_1011noise-dataset-2gru-scheduler_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
+        # model_name = 'model_conv_886529__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
+        # model_name = 'model_conv_457473__mel_128_seq_len_64_hidden_s_128_layers_0_dropout_0.2.pth'
         # model_name = 'model_conv_886529__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.3.pth'  # 正常 is_norm=False模型，用于测试
         # 读取参数
         element_size = int(model_name.split('seq_len_')[1].split('_')[0])  # 需要对应训练模型的参数seq_len
@@ -483,7 +416,8 @@ if __name__ == '__main__':
     min_val = -70
     max_val = 0
     ref_normal =130
-    threshold = ref_normal * 10 ** (0.5 * min_val / 10) * 1.025
+    # threshold = ref_normal * 10 ** (0.5 * min_val / 10) * 1.025
+    threshold = 130 * 10 ** (0.5 * -60 / 10) * 1.025
     print("threshold:", threshold)
     if "test_testset" in to_test:
         print("测试测试集--------------------------------------------------")

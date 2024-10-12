@@ -9,8 +9,51 @@ import soundfile as sf
 from scipy.signal import butter, sosfilt, correlate
 
 
+def generate_white_noise_stream(length):
+    """生成指定长度的白噪声流,与音频流长度相同"""
+    return np.random.normal(0, 1, length)
+
+
+def background_noise_align_length(target_audio, noise_audio):
+    """
+    背景噪声对齐长度，使其与目标音频长度相同。
+    """
+    if len(noise_audio) < len(target_audio) :
+        noise_audio = np.tile(noise_audio, int(np.ceil(len(target_audio) / len(noise_audio))))[:len(target_audio)]
+    else:
+        noise_audio = noise_audio[:len(target_audio)]
+    return noise_audio
+
+
+def add_noise_with_snr(target_audio, noise_audio, snr_db) :
+    """
+    给定目标音频和噪声音频，计算并添加噪声，返回处理后的音频。
+    """
+    noise_audio = background_noise_align_length(target_audio, noise_audio)
+
+    # 计算信号和噪声的能量
+    signal_power = np.mean(target_audio ** 2)
+    noise_power = np.mean(noise_audio ** 2)
+
+    # 根据SNR计算所需噪声能量
+    snr_linear = 10 ** (snr_db / 10)
+    adjusted_noise_power = signal_power / snr_linear
+
+    # 调整噪声强度
+    adjusted_noise_audio = noise_audio * np.sqrt(adjusted_noise_power / noise_power)
+
+    # 叠加噪声
+    noisy_audio = target_audio + adjusted_noise_audio
+
+    if np.max(np.abs(noisy_audio)) > 1:
+        # 正规化音频
+        noisy_audio = noisy_audio / np.max(np.abs(noisy_audio))
+
+    return noisy_audio
+
+
 def load_audio(file_path, sr=16000):
-    """加载音频文件，并将其重采样到指定的采样率"""
+    """加载音频文件，并将其重采样到指定的采样率",返回音频数据为(ndarray,sr)需解包,float32类型[-1,1]"""
     audio, sr = librosa.load(file_path, sr=sr)
     # print("load_audio_shape",audio.shape)
     # print("load_audio_sr",sr)

@@ -15,6 +15,8 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchaudio.transforms import InverseMelScale, GriffinLim  # 计算可微
+from torch.utils.tensorboard import SummaryWriter
+
 
 from audio_model_transformer import TransformerMelModel
 from audio_model_LSTM import SimpleLSTMModel
@@ -255,7 +257,7 @@ def evaluate(model, dataset, eva_num=10, alpha=1.0, beta=0.0, gamma=0.0):
 def train(model, load_model=False, model_type='transformer'):
 
     print("开始训练，device:", device)
-    model = model.to(device)
+    # model = model.to(device)
     model_config = model.config
     print(f'Model config: {model_config}')
     # 打印模型参数数量
@@ -279,6 +281,7 @@ def train(model, load_model=False, model_type='transformer'):
 
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate,weight_decay=1e-5)
     # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.8)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epoch, eta_min=1e-6)
 
     # 加载训练数据集,并划分训练集和验证集
     dataset = BreathToSpeechDataset(n_fft=512, hop_length=128, dataset_path=dataset_path, element_size=element_size,
@@ -304,7 +307,6 @@ def train(model, load_model=False, model_type='transformer'):
 
         for iter, batch in enumerate(dataloader_train):
             # print(batch[0][0].shape)  # 第一批，输入的形状， batch形状 batch_size, 2，seq_length, n_mels
-
             data, target = batch
             data = data.to(device)
             print(f'Input data min:{data.min().item()}|max:{data.max().item()}|mean:{data.mean().item()}|std:{data.std().item()}')
@@ -328,14 +330,16 @@ def train(model, load_model=False, model_type='transformer'):
                                 f"Layer: {name} | Gradient Max: {param.grad.abs().max().item()} | Gradient Min: {param.grad.abs().min().item()} | Gradient Mean: {param.grad.abs().mean().item()} | Weight Mean: {param.data.abs().mean().item()}")
                 optimizer.step()
                 optimizer.zero_grad()
-                # scheduler.step()
+                scheduler.step()
 
             if (iter+1) % eva_interval == 0:
-                eva_loss = evaluate(model, dataset_dict, eva_num=10, alpha=1.0, beta=0, gamma=0.0)
+                eva_loss = evaluate(model, dataset_dict, eva_num=20, alpha=1.0, beta=0, gamma=0.0)
                 print(
                     f'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>'
                     f'Iter {iter + 1}/{len(dataloader_train)}, train loss: {eva_loss["train"]:.4f}, valid loss: {eva_loss["val"]:.4f}')
                 loss_val.append(eva_loss['val'])
+                writer.add_scalar('train_loss', eva_loss['train'], epoch * len(dataloader_train) + iter)
+                writer.add_scalar('valid_loss', eva_loss['val'], epoch * len(dataloader_train) + iter)
 
         print(f"Epoch {epoch+1}/{max_epoch} finished, Evaluating model...")
 
@@ -345,14 +349,24 @@ def train(model, load_model=False, model_type='transformer'):
 
         # 保存模型配置
         if (epoch+1) % 10 == 0:
+            for name, param in model.named_parameters() :
+                writer.add_histogram(name, param, epoch)
+
             torch.save(model.state_dict(), os.path.join(
-                save_path, f'model_{model_type}_{params}_{str_config}.pth'))
-            print(f'>>>>>>>>Model saved to {save_path}model_{model_type}_{params}_{str_config}.pth')
+                save_path, f'model_{desc}_{model_type}_{params}_{str_config}.pth'))
+            print(f'>>>>>>>>Model saved to {save_path}model_{desc}_{model_type}_{params}_{str_config}.pth')
 
     # 保存模型
     torch.save(model.state_dict(), os.path.join(
-        save_path, f'model_{model_type}_{params}_{str_config}.pth'))
-    print(f'训练结束。Model saved to {save_path}model_{model_type}_{params}_{str_config}.pth')
+        save_path, f'model_{desc}_{model_type}_{params}_{str_config}.pth'))
+    print(f'训练结束。Model saved to {save_path}model_{desc}_{model_type}_{params}_{str_config}.pth')
+    writer.add_text("model_name", f'model_{desc}_{model_type}_{params}_{str_config}.pth', 0)
+    writer.add_text("desc", desc, 1)
+    writer.add_text("train_params",
+                    f'max_epoch_{max_epoch}_batch_size_{batch_size}_accumulation_steps_{accumulation_steps}_learning_rate_'
+                    f'{learning_rate}_eva_interval_{eva_interval}_train_ratio_{train_ratio}_val_ratio_'
+                    f'{val_ratio}_element_size_{element_size}_model_type_{model_type}_is_transform_'
+                    f'{is_transform}_is_norm_{is_norm}_loadding_model_{load_model}_desc_{desc}', 2)
 
     # 绘制损失曲线
     import matplotlib.pyplot as plt
@@ -393,8 +407,11 @@ if __name__ == '__main__':
 
     load_model = False  # 是否加载已训练模型
     model_name = "model_conv_886529__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.4.pth"
+    desc = '1011noise-dataset-2gru-scheduler'
 
     dataset_path = '../dataset/aidataset/'
+    log_dir = f'../runs/{desc}'
+    writer = SummaryWriter(log_dir=log_dir)
 
     torch.manual_seed(1337)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -410,6 +427,11 @@ if __name__ == '__main__':
     else:
         raise ValueError("Unsupported model type")
 
+    model = model.to(device)
+
+    writer.add_graph(model, input_to_model=torch.rand(batch_size, element_size, 128).to(device))
+
     train(model, load_model=load_model, model_type=model_type)
 
+    writer.close()
     # 09241202效果较好

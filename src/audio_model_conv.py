@@ -37,18 +37,23 @@ class BreathToSpeechModel(nn.Module):
 
         if lstm_layers > 0:
             # RNN用于时间序列建模
-            self.lstm = nn.LSTM(input_size=128, hidden_size=lstm_hidden_size, num_layers=lstm_layers,
-                                batch_first=True, bidirectional=True, dropout=dropout_rate)
-        # self.gru = nn.GRU(input_size=128, hidden_size=lstm_hidden_size, num_layers=lstm_layers,
-        #                   batch_first=True, bidirectional=True, dropout=dropout_rate)
+            # self.lstm = nn.LSTM(input_size=128, hidden_size=lstm_hidden_size, num_layers=lstm_layers,
+            #                     batch_first=True, bidirectional=True, dropout=dropout_rate)
+            self.gru = nn.GRU(input_size=128, hidden_size=lstm_hidden_size, num_layers=lstm_layers,
+                          batch_first=True, bidirectional=True, dropout=dropout_rate)
 
         # 全连接层将LSTM输出映射到Mel频带数
             self.fc = nn.Linear(lstm_hidden_size*2, mel_bins)
         else:
-            self.fc = nn.Linear(lstm_hidden_size, mel_bins)
-
+            self.fc = nn.Sequential(nn.Linear(lstm_hidden_size, 8*lstm_hidden_size), nn.ReLU(),
+                                    nn.Linear(8*lstm_hidden_size, mel_bins))
+            # self.fc = nn.Linear(lstm_hidden_size, mel_bins)
         # 最后的去噪层
         self.output_conv = nn.Conv2d(16, output_channels, kernel_size=(3, 3), padding=1)
+        # self.batch_norm16 = nn.BatchNorm2d(16)
+        # self.batch_norm32 = nn.BatchNorm2d(32)
+        # self.batch_norm64 = nn.BatchNorm2d(64)
+        # self.batch_norm128 = nn.BatchNorm2d(128)
 
     def forward(self, x):
         """
@@ -62,17 +67,22 @@ class BreathToSpeechModel(nn.Module):
 
         # 卷积层特征提取
         x1 = F.relu(self.conv1(x))
+        # x1 = self.batch_norm16(x1)   # 不收敛
         # print(x1.shape)    # torch.Size([8, 16, 128, 64])
         x2 = F.relu(self.conv2(x1))   # torch.Size([8, 32, 128, 64])
+        # x2 = self.batch_norm32(x2)
         # print(x2.shape)
         x3 = F.relu(self.conv3(x2))
+        # x3 = self.batch_norm64(x3)
         x4 = F.relu(self.conv4(x3))
+        # x4 = self.batch_norm128(x4)
         # print(x3.shape)   # torch.Size([8, 64, 128, 64])
         # print(x4.shape)   # torch.Size([8, 128, 128, 64])
 
         # x4 = x2
         # 获取卷积层输出的维度
-        batch_size, channels, height, width = x4.size()
+        with torch.no_grad():
+            batch_size, channels, height, width = x4.size()   # 不会纳入计算图？
 
         # 将卷积层输出重塑为LSTM输入形状
         x4_reshaped = x4.permute(0, 1, 3, 2).contiguous()  # 交换维度以便将时间序列放在第二维度 (batch_size,channels, width, height)
@@ -81,7 +91,8 @@ class BreathToSpeechModel(nn.Module):
         # print("x4_reshaped.shape:", x4_reshaped.shape)   # [256, 64, 128]
         # LSTM进行时间序列建模
         if self.lstm_layers > 0:
-            rnn_output, _ = self.lstm(x4_reshaped)   # [256, 64, 256]
+            # rnn_output, _ = self.lstm(x4_reshaped)   # [256, 64, 256]
+            rnn_output, _ = self.gru(x4_reshaped)   # [256, 64, 256]
         else:
             rnn_output = x4_reshaped
         # rnn_output, _ = self.gru(x4_reshaped)   # [256, 64, 256]
@@ -103,7 +114,8 @@ class BreathToSpeechModel(nn.Module):
         output = self.output_conv(x)  # [8, 1, 128, 64]
         # output = F.sigmoid(output)  # [8, 1, 128, 64]  输出0值很少
         # output = F.leaky_relu(output)   # [8, 1, 128, 64]
-        output = F.relu(output)  # [8, 1, 128, 64]
+        output = F.relu(output)  # [8, 1, 128, 64] # 1011最佳
+        # output = F.silu(output)
         output = output.squeeze(1).permute(0, 2, 1)  # 去掉通道维度
         # print("output.shape:", output.shape)  # torch.Size([8, 64, 128]),对应输入
         return output
