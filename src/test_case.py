@@ -116,8 +116,10 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
         audio_input_tensor = torch.from_numpy(mel_input_log_std).permute(1, 0).unsqueeze(0).float()
         print("mel_tensor.shape:", audio_input_tensor.shape)  # torch.Size([1, 108, 128])
         output_log_std = None
-        time_start = time.time()
+
         for i in range((audio_input_tensor.shape[1] // model_config["seq_len"]) + 1):
+            if i*model_config["seq_len"] >= audio_input_tensor.shape[1]:
+                break
             input_seq = audio_input_tensor[:, i * model_config["seq_len"] : min(audio_input_tensor.shape[1], (i + 1) * model_config["seq_len"]), :]
 
             if model_type == 'transformer' and input_seq.shape[1] < model_config["seq_len"]:
@@ -125,6 +127,7 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
                 print("末尾填充input_seq.shape:", input_seq.shape)
             input_seq = input_seq.to(device)
             print("input_seq.shape:", input_seq.shape)
+            time_start = time.time()
             predict = model(input_seq).permute(0, 2, 1)
             # print("转换后的predict.shape:", predict.shape)
             predict = predict.squeeze(0)
@@ -132,8 +135,8 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
                 output_log_std = predict
             else:
                 output_log_std = torch.cat((output_log_std, predict), dim=1)
-        time_end = time.time()
-        print(">>>>>>>>>>>模型推理时间:", time_end - time_start)
+            time_end = time.time()
+            print(">>>>>>>>>>>模型推理时间:", time_end - time_start)
         print("output.shape:", output_log_std.shape)
 
         output_log_std = output_log_std.cpu().numpy()
@@ -175,7 +178,8 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
         plot_mel_hist([(output.flatten(), "output"), (target_mel.flatten(), "target"), (mel_input.flatten(), "mel_input"), (mel_input_log_std.flatten(), "input_log_std"), ])
 
         # 绘制mel频谱
-        plot_mel_spectrogram_list([(mel_input, "input"), (output, "output"), (target_mel, "target")], is_log= False)
+        min_len = min(mel_input.shape[1], output.shape[1], target_mel.shape[1])
+        plot_mel_spectrogram_list([(mel_input[:, :min_len], "input"), (output[:, :min_len], "output"), (target_mel[:, :min_len], "target")], is_log= False)
 
 
 def test_overfit(model, model_path, save_path, model_name, transform, is_norm, model_type, dataset_path, n_fft, hop_length, element_size=64, train_ratio=0.9, batch_size= 8, ):
@@ -408,8 +412,8 @@ if __name__ == '__main__':
 
     test_list = ['test_testset', 'test_overfit', 'test_normalize']
     to_test = [
-               # "test_testset",
-               "test_overfit",
+               "test_testset",
+               # "test_overfit",
                # "test_normalize"
     ]
 
