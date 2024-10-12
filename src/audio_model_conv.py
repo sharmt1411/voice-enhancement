@@ -24,7 +24,7 @@ class BreathToSpeechModel(nn.Module):
             'dropout': dropout_rate
             }
 
-        # 卷积层用于特征提取
+        # 卷积层用于特征提取，待修改
         self.conv1 = nn.Conv2d(input_channels, 16, kernel_size=(3, 3), padding=1)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=(3, 3), padding=1)
         self.conv3 = nn.Conv2d(32, 64, kernel_size=(3, 3), padding=1)
