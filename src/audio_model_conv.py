@@ -29,8 +29,10 @@ class BreathToSpeechModel(nn.Module):
         self.conv2 = nn.Conv2d(16, 32, kernel_size=(3, 3), padding=1)
         self.conv3 = nn.Conv2d(32, 64, kernel_size=(3, 3), padding=1)
         self.conv4 = nn.Conv2d(64, 128, kernel_size=(3, 3), padding=1)
+        self.conv5 = nn.Conv2d(128, 256, kernel_size=(3, 3), padding=1)
 
         # 用于去噪的U-Net跳跃连接
+        self.upconv4 = nn.ConvTranspose2d(256, 128, kernel_size=(3, 3), padding=1)
         self.upconv3 = nn.ConvTranspose2d(128, 64, kernel_size=(3, 3), padding=1)
         self.upconv2 = nn.ConvTranspose2d(64, 32, kernel_size=(3, 3), padding=1)
         self.upconv1 = nn.ConvTranspose2d(32, 16, kernel_size=(3, 3), padding=1)
@@ -76,25 +78,25 @@ class BreathToSpeechModel(nn.Module):
         # x3 = self.batch_norm64(x3)
         x4 = F.relu(self.conv4(x3))
         # x4 = self.batch_norm128(x4)
+        x5 = F.relu(self.conv5(x4))
         # print(x3.shape)   # torch.Size([8, 64, 128, 64])
         # print(x4.shape)   # torch.Size([8, 128, 128, 64])
 
-        # x4 = x2
-        # 获取卷积层输出的维度
+        lstm_input = x5
         with torch.no_grad():
-            batch_size, channels, height, width = x4.size()   # 不会纳入计算图？
+            batch_size, channels, height, width = lstm_input.size()   # 不会纳入计算图？
 
         # 将卷积层输出重塑为LSTM输入形状
-        x4_reshaped = x4.permute(0, 1, 3, 2).contiguous()  # 交换维度以便将时间序列放在第二维度 (batch_size,channels, width, height)
-        x4_reshaped = x4_reshaped.view(batch_size*channels,  width, height)
+        reshaped = lstm_input.permute(0, 1, 3, 2).contiguous()  # 交换维度以便将时间序列放在第二维度 (batch_size,channels, width, height)
+        lstm_input_reshaped = reshaped.view(batch_size*channels,  width, height)
         # 变形为 (batch_size*channels, sequence_length, input_size)
         # print("x4_reshaped.shape:", x4_reshaped.shape)   # [256, 64, 128]
         # LSTM进行时间序列建模
         if self.lstm_layers > 0:
             # rnn_output, _ = self.lstm(x4_reshaped)   # [256, 64, 256]
-            rnn_output, _ = self.gru(x4_reshaped)   # [256, 64, 256]
+            rnn_output, _ = self.gru(lstm_input_reshaped)   # [256, 64, 256]
         else:
-            rnn_output = x4_reshaped
+            rnn_output = lstm_input_reshaped
         # rnn_output, _ = self.gru(x4_reshaped)   # [256, 64, 256]
         # print("rnn_output.shape:", rnn_output.shape)
 
@@ -105,7 +107,8 @@ class BreathToSpeechModel(nn.Module):
         rnn_output_reshaped = rnn_output2.permute(0, 2, 1).view(batch_size, -1, height, width)   # [8, 32, 128, 64]
         # print("rnn_output_reshaped.shape:", rnn_output_reshaped.shape)
         # U-Net反卷积进行去噪
-        x = F.relu(self.upconv3(rnn_output_reshaped) + x3)
+        x = F.relu(self.upconv4(rnn_output_reshaped) + x4)
+        x = F.relu(self.upconv3(x) + x3)
         x = F.relu(self.upconv2(x) + x2)
         x = F.relu(self.upconv1(x) + x1)
         # print("x.shape:", x.shape)  # torch.Size([8, 16, 128, 64])

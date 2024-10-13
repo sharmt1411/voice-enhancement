@@ -385,9 +385,11 @@ def train(model, load_model=False, model_type='transformer'):
 
 
 if __name__ == '__main__':
-    # 训练超参数设置
+
+    torch.cuda.empty_cache()
+    # 训练超参数设置v
     max_epoch = 50
-    batch_size = 8
+    batch_size = 6 # 8
     accumulation_steps = 4
     learning_rate = 1e-3
     eva_interval = 30
@@ -407,7 +409,7 @@ if __name__ == '__main__':
 
     load_model = False  # 是否加载已训练模型
     model_name = "model_conv_886529__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.4.pth"
-    desc = '1011noise-dataset-2gru-scheduler'
+    desc = '1011noise-conv5'
 
     dataset_path = '../dataset/aidataset/'
     log_dir = f'../runs/{desc}'

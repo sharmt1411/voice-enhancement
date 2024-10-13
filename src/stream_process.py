@@ -214,7 +214,7 @@ def load_model():
     model_path = '../model_save'
     global element_size
 
-    model_name = 'model_1010noise-dataset-2gru_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
+    model_name = 'model_1011noise-conv5_conv_1311873__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
     # 读取参数
     element_size = int(model_name.split('seq_len_')[1].split('_')[0])  # 需要对应训练模型的参数seq_len
     lstm_hidden_size = int(model_name.split('hidden_s_')[1].split('_')[0])
@@ -256,7 +256,7 @@ min_val = -70
 # min_val = -60
 max_val = 0
 ref_normal = 130
-mel_threshold = ref_normal * 10 ** (0.5 * (min_val+27) / 10) * 1.025   # +15对正常影响较小，gain30，ref130
+mel_threshold = ref_normal * 10 ** (0.5 * (min_val+15) / 10) * 1.025   # +15对正常影响较小，gain30，ref130
 num_mel = 128
 f_max = 8000
 n_fft = 512
