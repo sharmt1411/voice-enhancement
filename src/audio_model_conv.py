@@ -24,7 +24,7 @@ class BreathToSpeechModel(nn.Module):
             'dropout': dropout_rate
             }
 
-        # 卷积层用于特征提取，待修改
+        # 卷积层用于特征提取
         self.conv1 = nn.Conv2d(input_channels, 16, kernel_size=(3, 3), padding=1)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=(3, 3), padding=1)
         self.conv3 = nn.Conv2d(32, 64, kernel_size=(3, 3), padding=1)
@@ -36,6 +36,8 @@ class BreathToSpeechModel(nn.Module):
         self.upconv3 = nn.ConvTranspose2d(128, 64, kernel_size=(3, 3), padding=1)
         self.upconv2 = nn.ConvTranspose2d(64, 32, kernel_size=(3, 3), padding=1)
         self.upconv1 = nn.ConvTranspose2d(32, 16, kernel_size=(3, 3), padding=1)
+
+        self.layer_norm1 = nn.LayerNorm(128)
 
         if lstm_layers > 0:
             # RNN用于时间序列建模
@@ -87,8 +89,11 @@ class BreathToSpeechModel(nn.Module):
             batch_size, channels, height, width = lstm_input.size()   # 不会纳入计算图？
 
         # 将卷积层输出重塑为LSTM输入形状
+
+
         reshaped = lstm_input.permute(0, 1, 3, 2).contiguous()  # 交换维度以便将时间序列放在第二维度 (batch_size,channels, width, height)
         lstm_input_reshaped = reshaped.view(batch_size*channels,  width, height)
+        lstm_input_reshaped = self.layer_norm1(lstm_input_reshaped)
         # 变形为 (batch_size*channels, sequence_length, input_size)
         # print("x4_reshaped.shape:", x4_reshaped.shape)   # [256, 64, 128]
         # LSTM进行时间序列建模

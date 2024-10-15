@@ -388,7 +388,7 @@ if __name__ == '__main__':
     # 训练超参数设置
     max_epoch = 50
     batch_size = 8
-    accumulation_steps = 4
+    accumulation_steps = 8
     learning_rate = 1e-3
     eva_interval = 30
 
@@ -407,7 +407,12 @@ if __name__ == '__main__':
 
     load_model = False  # 是否加载已训练模型
     model_name = "model_conv_886529__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.4.pth"
-    desc = '1011noise-dataset-2gru-scheduler'
+
+    import time
+    current_time = time.localtime()
+    time = time.strftime("%m-%d-%H", current_time)
+    desc = time+'dataset-gain1-noise3-normlayer'
+    print(f'start Training {desc} model...')
 
     dataset_path = '../dataset/aidataset/'
     log_dir = f'../runs/{desc}'
