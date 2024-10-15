@@ -201,6 +201,17 @@ def manual_stft_loss(predicted_mel, target_mel, n_fft=512, n_mels=128, sample_ra
     return loss_fn(predicted_stft, target_stft)
 
 
+def kl_loss(predicted, target):
+    """KL散度损失"""
+    # 计算KL散度
+    predicted = predicted.reshape(-1, predicted.shape[2])
+    target = target.reshape(-1, target.shape[2])
+    loss = F.kl_div(F.log_softmax(predicted, dim=1), F.softmax(target, dim=1), reduction='mean')
+    # print("KL_loss", KL_loss)
+    print("KL_loss.shape", loss.shape, loss.item())
+    return loss
+
+
 # 定义总损失函数
 def total_loss(predicted, target, alpha=1.0, beta=0.0, gamma=0.0, is_eval=False):
     """各种定义loss，注意输入是否是log"""
@@ -213,8 +224,10 @@ def total_loss(predicted, target, alpha=1.0, beta=0.0, gamma=0.0, is_eval=False)
 
     if beta != 0:
         # STFT 损失
-        stft_loss_val = manual_stft_loss(predicted, target)
-        total += beta * stft_loss_val
+        # stft_loss_val = manual_stft_loss(predicted, target)
+        # total += beta * stft_loss_val
+        kl_loss_val = kl_loss(predicted, target)
+        total += beta * kl_loss_val
     if gamma != 0:
         # 计算mel谱图的log损失，适用于非log输入
         log_mel_loss = log_mel_spectrogram_loss(predicted, target)
@@ -314,7 +327,7 @@ def train(model, load_model=False, model_type='transformer'):
             print(f'Target data min:{target.min().item()}|max:{target.max().item()}|mean:{target.mean().item()}|std:{target.std().item()}')
             # optimizer.zero_grad()
             predicted = model(data)
-            loss = total_loss(predicted, target, alpha=1.0, beta=0.0, gamma=0.0)
+            loss = total_loss(predicted, target, alpha=1.0, beta=0.5, gamma=0.0)
             loss_train.append(loss.item())
             loss.backward()
             if (iter+1) % accumulation_steps == 0 or (iter+1) == len(dataloader_train):
@@ -333,7 +346,7 @@ def train(model, load_model=False, model_type='transformer'):
                 scheduler.step()
 
             if (iter+1) % eva_interval == 0:
-                eva_loss = evaluate(model, dataset_dict, eva_num=20, alpha=1.0, beta=0, gamma=0.0)
+                eva_loss = evaluate(model, dataset_dict, eva_num=20, alpha=1.0, beta=0.5, gamma=0.0)
                 print(
                     f'>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>'
                     f'Iter {iter + 1}/{len(dataloader_train)}, train loss: {eva_loss["train"]:.4f}, valid loss: {eva_loss["val"]:.4f}')
