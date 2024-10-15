@@ -136,33 +136,35 @@ class BreathToSpeechDataset(Dataset):
             breath_waveform, breath_sr = self._load_audio(breath_file)
             normal_waveform, normal_sr = self._load_audio(normal_file)
             # 加噪声
-            length_noise = len(breath_waveform)
-            white_noise_waveform = generate_white_noise_stream(length_noise)
-            breath_waveform = add_noise_with_snr(breath_waveform, white_noise_waveform, snr_db=10)
 
-            breath_mel = np.array([])
-            normal_mel = np.array([])
-            # 确保采样率一致
-            assert breath_sr == normal_sr, "采样率不一致"
-            # 转换为Mel频谱图，这里分段拆分，模拟现实中分段输入
-            element_length = (
-                                         self.element_size - 1) * self.hop_length  # 每个块的长度，128hop，64element_size，则为128*63=8064，约为0.5s
-            for j in trange(0, len(breath_waveform), element_length) :
-                if j + element_length > len(breath_waveform) :
-                    break
-                breath_segment = breath_waveform[j :j + element_length]
-                normal_segment = normal_waveform[j :j + element_length]
-                breath_mel_ = audio_to_mel(breath_segment, self.n_fft, self.hop_length, breath_sr, self.num_mel,
-                                           self.f_max)
-                normal_mel_ = audio_to_mel(normal_segment, self.n_fft, self.hop_length, normal_sr, self.num_mel,
-                                           self.f_max)
-                breath_mel = np.hstack((breath_mel, breath_mel_)) if breath_mel.size else breath_mel_
-                normal_mel = np.hstack((normal_mel, normal_mel_)) if normal_mel.size else normal_mel_
+            for snr_db in [5, 10, 20]:
+                length_noise = len(breath_waveform)
+                white_noise_waveform = generate_white_noise_stream(length_noise)
+                breath_waveform_noise = add_noise_with_snr(breath_waveform, white_noise_waveform, snr_db=snr_db)
 
-            self.breath_mel_data = np.hstack(
-                (self.breath_mel_data, breath_mel)) if self.breath_mel_data.size else breath_mel
-            self.normal_mel_data = np.hstack(
-                (self.normal_mel_data, normal_mel)) if self.normal_mel_data.size else normal_mel
+                breath_mel = np.array([])
+                normal_mel = np.array([])
+                # 确保采样率一致
+                assert breath_sr == normal_sr, "采样率不一致"
+                # 转换为Mel频谱图，这里分段拆分，模拟现实中分段输入
+                element_length = (
+                                             self.element_size - 1) * self.hop_length  # 每个块的长度，128hop，64element_size，则为128*63=8064，约为0.5s
+                for j in trange(0, len(breath_waveform), element_length) :
+                    if j + element_length > len(breath_waveform) :
+                        break
+                    breath_segment = breath_waveform_noise[j :j + element_length]
+                    normal_segment = normal_waveform[j :j + element_length]
+                    breath_mel_ = audio_to_mel(breath_segment, self.n_fft, self.hop_length, breath_sr, self.num_mel,
+                                               self.f_max)
+                    normal_mel_ = audio_to_mel(normal_segment, self.n_fft, self.hop_length, normal_sr, self.num_mel,
+                                               self.f_max)
+                    breath_mel = np.hstack((breath_mel, breath_mel_)) if breath_mel.size else breath_mel_
+                    normal_mel = np.hstack((normal_mel, normal_mel_)) if normal_mel.size else normal_mel_
+
+                self.breath_mel_data = np.hstack(
+                    (self.breath_mel_data, breath_mel)) if self.breath_mel_data.size else breath_mel
+                self.normal_mel_data = np.hstack(
+                    (self.normal_mel_data, normal_mel)) if self.normal_mel_data.size else normal_mel
 
         '''处理加背景噪呼吸音频与正常声音音频数据集，让模型识别降噪'''
         for i in range(len(self.file_pairs)) :
@@ -173,32 +175,71 @@ class BreathToSpeechDataset(Dataset):
             # 加噪声
             length_noise = len(breath_waveform)
             background_noise_waveform, sr = self._load_audio('noise_background.wav')
-            if len(background_noise_waveform) > 1:
-                print("背景噪声音频加载成功。长度", len(background_noise_waveform))
-                breath_waveform = add_noise_with_snr(breath_waveform, background_noise_waveform, snr_db=10)
 
-            breath_mel = np.array([])
-            normal_mel = np.array([])
-            # 确保采样率一致
-            assert breath_sr == normal_sr, "采样率不一致"
-            # 转换为Mel频谱图，这里分段拆分，模拟现实中分段输入
-            element_length = (self.element_size - 1) * self.hop_length  # 每个块的长度，128hop，64element_size，则为128*63=8064，约为0.5s
-            for j in trange(0, len(breath_waveform), element_length) :
-                if j + element_length > len(breath_waveform) :
+            for snr_db in [5, 10, 20]:
+                if len(background_noise_waveform) > 1:
+                    print("背景噪声音频加载成功。长度", len(background_noise_waveform))
+                    breath_waveform_noise = add_noise_with_snr(breath_waveform, background_noise_waveform, snr_db=snr_db)
+                else:
+                    print("背景噪声音频加载失败。")
                     break
-                breath_segment = breath_waveform[j:j + element_length]
-                normal_segment = normal_waveform[j:j + element_length]
-                breath_mel_ = audio_to_mel(breath_segment, self.n_fft, self.hop_length, breath_sr, self.num_mel,
-                                           self.f_max)
-                normal_mel_ = audio_to_mel(normal_segment, self.n_fft, self.hop_length, normal_sr, self.num_mel,
-                                           self.f_max)
-                breath_mel = np.hstack((breath_mel, breath_mel_)) if breath_mel.size else breath_mel_
-                normal_mel = np.hstack((normal_mel, normal_mel_)) if normal_mel.size else normal_mel_
 
-            self.breath_mel_data = np.hstack(
-                (self.breath_mel_data, breath_mel)) if self.breath_mel_data.size else breath_mel
-            self.normal_mel_data = np.hstack(
-                (self.normal_mel_data, normal_mel)) if self.normal_mel_data.size else normal_mel
+                breath_mel = np.array([])
+                normal_mel = np.array([])
+                # 确保采样率一致
+                assert breath_sr == normal_sr, "采样率不一致"
+                # 转换为Mel频谱图，这里分段拆分，模拟现实中分段输入
+                element_length = (self.element_size - 1) * self.hop_length  # 每个块的长度，128hop，64element_size，则为128*63=8064，约为0.5s
+                for j in trange(0, len(breath_waveform), element_length) :
+                    if j + element_length > len(breath_waveform) :
+                        break
+                    breath_segment = breath_waveform_noise[j:j + element_length]
+                    normal_segment = normal_waveform[j:j + element_length]
+                    breath_mel_ = audio_to_mel(breath_segment, self.n_fft, self.hop_length, breath_sr, self.num_mel,
+                                               self.f_max)
+                    normal_mel_ = audio_to_mel(normal_segment, self.n_fft, self.hop_length, normal_sr, self.num_mel,
+                                               self.f_max)
+                    breath_mel = np.hstack((breath_mel, breath_mel_)) if breath_mel.size else breath_mel_
+                    normal_mel = np.hstack((normal_mel, normal_mel_)) if normal_mel.size else normal_mel_
+
+                self.breath_mel_data = np.hstack(
+                    (self.breath_mel_data, breath_mel)) if self.breath_mel_data.size else breath_mel
+                self.normal_mel_data = np.hstack(
+                    (self.normal_mel_data, normal_mel)) if self.normal_mel_data.size else normal_mel
+
+        '''处理不同增益的输入与标准输出'''
+        for i in range(len(self.file_pairs)) :
+            print(f"正在加载处理第{i + 1}个白噪声呼吸音频对---------------")
+            normal_file, breath_file = self.file_pairs[i]
+            breath_waveform, breath_sr = self._load_audio(breath_file)
+            normal_waveform, normal_sr = self._load_audio(normal_file)
+            # 不同输入增益
+            for gain in [0.5,]:  # [0.5, 0.1, 0.05]:
+                breath_waveform_gain = breath_waveform * gain
+
+                breath_mel = np.array([])
+                normal_mel = np.array([])
+                # 确保采样率一致
+                assert breath_sr == normal_sr, "采样率不一致"
+                # 转换为Mel频谱图，这里分段拆分，模拟现实中分段输入
+                element_length = (
+                                             self.element_size - 1) * self.hop_length  # 每个块的长度，128hop，64element_size，则为128*63=8064，约为0.5s
+                for j in trange(0, len(breath_waveform), element_length) :
+                    if j + element_length > len(breath_waveform) :
+                        break
+                    breath_segment = breath_waveform_gain[j :j + element_length]
+                    normal_segment = normal_waveform[j :j + element_length]
+                    breath_mel_ = audio_to_mel(breath_segment, self.n_fft, self.hop_length, breath_sr, self.num_mel,
+                                               self.f_max)
+                    normal_mel_ = audio_to_mel(normal_segment, self.n_fft, self.hop_length, normal_sr, self.num_mel,
+                                               self.f_max)
+                    breath_mel = np.hstack((breath_mel, breath_mel_)) if breath_mel.size else breath_mel_
+                    normal_mel = np.hstack((normal_mel, normal_mel_)) if normal_mel.size else normal_mel_
+
+                self.breath_mel_data = np.hstack(
+                    (self.breath_mel_data, breath_mel)) if self.breath_mel_data.size else breath_mel
+                self.normal_mel_data = np.hstack(
+                    (self.normal_mel_data, normal_mel)) if self.normal_mel_data.size else normal_mel
 
         assert self.breath_mel_data.shape[1] == self.normal_mel_data.shape[1], "呼吸和正常音频时长不一致"
         # print(f"数据集加载完成，呼吸{self.breath_mel_data.shape}, 正常{self.normal_mel_data.shape}")

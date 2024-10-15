@@ -387,7 +387,9 @@ if __name__ == '__main__':
         lstm_layers = int(model_name.split('layers_')[1].split('_')[0])
         print("lstm_layers:", lstm_layers)
     elif model_type == 'conv':
-        model_name = 'model_1010noise-dataset-2gru_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'   # 最佳
+        model_name = 'model_1014-dataset-gain3-noise3_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
+        # model_name = 'model_1014-dataset-gain3_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
+        # model_name = 'model_1010noise-dataset-2gru_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'   # 最佳
         # model_name = 'model_1011noise-dataset-2gru-scheduler_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
         # model_name = 'model_conv_886529__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
         # model_name = 'model_conv_457473__mel_128_seq_len_64_hidden_s_128_layers_0_dropout_0.2.pth'
