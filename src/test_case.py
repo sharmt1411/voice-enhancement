@@ -153,11 +153,6 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
         else:
             output = output_log_std
 
-        """音频拼接，输出低频+输入高频"""
-        output_high = output[64:128,:]
-        input_high = mel_input[64:100,:]
-        output[64:100,:] += input_high
-
         # 计算音频
         audio_output = mel_to_audio(output,  sr=sr, n_fft=n_fft, hop_length=hop_length, n_iter=32)
         output_original = mel_to_audio(output_original,  sr=sr, n_fft=n_fft, hop_length=hop_length, n_iter=32)
@@ -392,8 +387,7 @@ if __name__ == '__main__':
         lstm_layers = int(model_name.split('layers_')[1].split('_')[0])
         print("lstm_layers:", lstm_layers)
     elif model_type == 'conv':
-        model_name = 'model_1011noise-conv5_conv_1311873__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
-        # model_name = 'model_1010noise-dataset-2gru_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'   # 最佳
+        model_name = 'model_1010noise-dataset-2gru_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'   # 最佳
         # model_name = 'model_1011noise-dataset-2gru-scheduler_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
         # model_name = 'model_conv_886529__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
         # model_name = 'model_conv_457473__mel_128_seq_len_64_hidden_s_128_layers_0_dropout_0.2.pth'
