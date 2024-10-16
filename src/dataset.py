@@ -66,6 +66,7 @@ class BreathToSpeechDataset(Dataset):
     def _load_audio_data(self):
         """加载所有数据集数据，并合并拆分"""
         length = len(self.file_pairs)
+        hop = 4032
 
         '''处理正常呼吸音频与正常声音音频数据集'''
         for i in range(len(self.file_pairs)) :
@@ -82,7 +83,7 @@ class BreathToSpeechDataset(Dataset):
             assert breath_sr == normal_sr, "采样率不一致"
             # 转换为Mel频谱图，这里分段拆分，模拟现实中分段输入
             element_length = (self.element_size-1)*self.hop_length   # 每个块的长度，128hop，64element_size，则为128*63=8064，约为0.5s
-            for j in trange(0, len(breath_waveform), element_length):
+            for j in trange(0, len(breath_waveform), hop):
                 if j + element_length > len(breath_waveform):
                     break
                 breath_segment = breath_waveform[j:j+element_length]
@@ -113,7 +114,7 @@ class BreathToSpeechDataset(Dataset):
             breath_mel = np.array([])
 
             element_length = (self.element_size - 1) * self.hop_length  # 每个块的长度，128hop，64element_size，则为128*63=8064，约为0.5s
-            for j in trange(0, len(normal_waveform), element_length) :
+            for j in trange(0, len(normal_waveform), hop) :
                 if j + element_length > len(normal_waveform) :
                     break
                 normal_segment = normal_waveform[j :j + element_length]
@@ -149,7 +150,7 @@ class BreathToSpeechDataset(Dataset):
                 # 转换为Mel频谱图，这里分段拆分，模拟现实中分段输入
                 element_length = (
                                              self.element_size - 1) * self.hop_length  # 每个块的长度，128hop，64element_size，则为128*63=8064，约为0.5s
-                for j in trange(0, len(breath_waveform), element_length) :
+                for j in trange(0, len(breath_waveform), hop) :
                     if j + element_length > len(breath_waveform) :
                         break
                     breath_segment = breath_waveform_noise[j :j + element_length]
@@ -190,7 +191,7 @@ class BreathToSpeechDataset(Dataset):
                 assert breath_sr == normal_sr, "采样率不一致"
                 # 转换为Mel频谱图，这里分段拆分，模拟现实中分段输入
                 element_length = (self.element_size - 1) * self.hop_length  # 每个块的长度，128hop，64element_size，则为128*63=8064，约为0.5s
-                for j in trange(0, len(breath_waveform), element_length) :
+                for j in trange(0, len(breath_waveform), hop) :
                     if j + element_length > len(breath_waveform) :
                         break
                     breath_segment = breath_waveform_noise[j:j + element_length]
@@ -224,7 +225,7 @@ class BreathToSpeechDataset(Dataset):
                 # 转换为Mel频谱图，这里分段拆分，模拟现实中分段输入
                 element_length = (
                                              self.element_size - 1) * self.hop_length  # 每个块的长度，128hop，64element_size，则为128*63=8064，约为0.5s
-                for j in trange(0, len(breath_waveform), element_length) :
+                for j in trange(0, len(breath_waveform), hop) :
                     if j + element_length > len(breath_waveform) :
                         break
                     breath_segment = breath_waveform_gain[j :j + element_length]
