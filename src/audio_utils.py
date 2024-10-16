@@ -11,7 +11,7 @@ from scipy.signal import butter, sosfilt, correlate
 
 def generate_white_noise_stream(length):
     """生成指定长度的白噪声流,与音频流长度相同"""
-    return np.random.normal(0, 1, length)
+    return np.random.normal(0, 1, length).astype(np.float32)
 
 
 def background_noise_align_length(target_audio, noise_audio):
