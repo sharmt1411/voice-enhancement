@@ -97,7 +97,8 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
     if transform and is_norm:
         mel_input_log_std = mel_input/50  # 线性归一化
     elif transform and not is_norm:
-        mel_input_log = librosa.amplitude_to_db(mel_input, ref=130)
+        # mel_input_log = librosa.amplitude_to_db(mel_input, ref=130)
+        mel_input_log = librosa.amplitude_to_db(mel_input, ref=7)
         mel_input_log_clip = np.clip(mel_input_log, min_val, 0)
         print(f"mel_input_log.shape:{mel_input_log.shape}, 最大值:{np.max(mel_input_log)}, 最小值:{np.min(mel_input_log)}")
         mel_input_log_std = (mel_input_log_clip - min_val) / (max_val - min_val)
@@ -146,22 +147,23 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
             output = output_log_std * 130  # 线性恢复(0,1)对应(0,1)
         elif transform and not is_norm:
             output_log = output_log_std * (max_val-min_val) + min_val    # outputmax0.8恢复到1.2倍，线性恢复(0,1)对应(-100,0)
-            output = librosa.db_to_amplitude(output_log, ref= 130)
+            output = librosa.db_to_amplitude(output_log, ref= 210)
             print(f"test_audio_model_output.shape:{output.shape}, 最大值:{np.max(output)}, 最小值:{np.min(output)}")
             output_original = copy.deepcopy(output)
+            print("output_original.shape:", output_original.shape)
             output[output < threshold] = 0  # 降噪
         else:
             output = output_log_std
 
         # 计算音频
         audio_output = mel_to_audio(output,  sr=sr, n_fft=n_fft, hop_length=hop_length, n_iter=32)
-        output_original = mel_to_audio(output_original,  sr=sr, n_fft=n_fft, hop_length=hop_length, n_iter=32)
+        output_original_audio = mel_to_audio(output_original,  sr=sr, n_fft=n_fft, hop_length=hop_length, n_iter=32)
         # 保存音频
         save_path1 = os.path.join(save_path, 'audio_output_test_clip.wav')
         save_audio(audio_output, sr, save_path1)
 
         save_path2 = os.path.join(save_path, 'audio_output_original.wav')
-        save_audio(output_original, sr, save_path2)
+        save_audio(output_original_audio, sr, save_path2)
 
 
         # 统计模型输出的均值和标准差
@@ -175,11 +177,12 @@ def test_audio_model_process(model, model_path, save_path, model_name, transform
         print("对标的target_mel.mean:", target_mel.mean(), "target_mel.std:", target_mel.std(), "max:", target_mel.max(), "min:", target_mel.min())
 
         # 分析mel频谱的数据分布并用matplotlib直方图绘制
-        plot_mel_hist([(output.flatten(), "output"), (target_mel.flatten(), "target"), (mel_input.flatten(), "mel_input"), (mel_input_log_std.flatten(), "input_log_std"), ])
+        # plot_mel_hist([(output.flatten(), "output"), (target_mel.flatten(), "target"), (mel_input.flatten(), "mel_input"), (mel_input_log_std.flatten(), "input_log_std"), ])
 
         # 绘制mel频谱
         min_len = min(mel_input.shape[1], output.shape[1], target_mel.shape[1])
-        plot_mel_spectrogram_list([(mel_input[:, :min_len], "input"), (output[:, :min_len], "output"), (target_mel[:, :min_len], "target")], is_log= False)
+        plot_mel_spectrogram_list([(mel_input[:, :min_len], "input"),(output_original[:, :min_len], "output_original"),
+                                   (output[:, :min_len], "output"), (target_mel[:, :min_len], "target")], is_log= False)
 
 
 def test_overfit(model, model_path, save_path, model_name, transform, is_norm, model_type, dataset_path, n_fft, hop_length, element_size=64, train_ratio=0.9, batch_size= 8, ):
@@ -387,7 +390,7 @@ if __name__ == '__main__':
         lstm_layers = int(model_name.split('layers_')[1].split('_')[0])
         print("lstm_layers:", lstm_layers)
     elif model_type == 'conv':
-        model_name = 'model_10-15-15dataset-gain1-noise3-normlayer_conv_721921__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
+        model_name = 'model_10-17-11dataset-gain1-noise3-normlayer-klloss-hop2-finaldataset_conv_721921__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
         # model_name = 'model_1014-dataset-gain3_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
         # model_name = 'model_1010noise-dataset-2gru_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'   # 最佳
         # model_name = 'model_1011noise-dataset-2gru-scheduler_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
@@ -423,7 +426,7 @@ if __name__ == '__main__':
     max_val = 0
     ref_normal =130
     # threshold = ref_normal * 10 ** (0.5 * min_val / 10) * 1.025
-    threshold = 130 * 10 ** (0.5 * -65 / 10) * 1.025
+    threshold = 210 * 10 ** (0.5 * -69 / 10) * 1.0
     print("threshold:", threshold)
     if "test_testset" in to_test:
         print("测试测试集--------------------------------------------------")

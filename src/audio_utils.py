@@ -354,7 +354,7 @@ def plot_mel_spectrogram_list(mel_list, sr=16000, n_mels=128, fmax=8000, is_log=
     plt.figure(figsize=(10, 4*len(log_mel_list)))
     for i, (log_mel_spectrogram, method) in enumerate(log_mel_list):
         plt.subplot(len(log_mel_list), 1, i + 1)
-        librosa.display.specshow(log_mel_spectrogram, sr=sr, x_axis='time', y_axis='mel', fmax=fmax)
+        librosa.display.specshow(log_mel_spectrogram, sr=sr, x_axis='time', y_axis='mel', fmax=fmax, vmin=-80, vmax=0)
         plt.title(f'Mel spectrogram-{method}')
         plt.colorbar(format='%+2.0f dB')
     plt.tight_layout()

@@ -7,77 +7,46 @@ print(torch.version.cuda)
 print(torch.cuda.is_available())
 
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import matplotlib.pyplot as plt
+import os
+import re
 
-# 生成数据集
-import torch
-import torch.nn as nn
-import torch.optim as optim
+from audio_utils import *
 
-# 创建简单的非线性神经网络
-class SimpleNN(nn.Module):
-    def __init__(self):
-        super(SimpleNN, self).__init__()
-        self.fc1 = nn.Linear(1, 64)
-        self.fc2 = nn.Linear(64, 1)
+audio,_ = load_audio("../dataset/aidataset/audio_breath_1.wav")
+mel = audio_to_mel(audio,512,128)
+print(mel.shape)
+print(mel.dtype)
+print(mel[0][0].dtype)
 
-    def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
+noise_stream = generate_white_noise_stream(100)
+print(noise_stream.shape)
+print(noise_stream.dtype)
+def rename_files_in_directory(directory) :
+    # 获取文件夹中的所有文件
+    files = os.listdir(directory)
 
-# 训练数据
-def generate_data(n_samples=100):
-    x = torch.rand(n_samples, 1) * 10  # 随机生成输入 x
-    y = torch.sin(x)  # 对应输出 y
-    return x, y
+    # 定义正则表达式匹配
+    wav_pattern = re.compile(r'^(\d+)\.WAV$')  # 匹配 25.WAV 这种格式
+    breath_pattern = re.compile(r'^录音 \((\d+)\)\.wav$')  # 匹配 录音 (25).wav 这种格式
 
-# 定义模型、损失函数和优化器
-model = SimpleNN()
-criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+    for file_name in files :
+        # 处理 audio_normal 文件
+        wav_match = wav_pattern.match(file_name)
+        if wav_match :
+            index = int(wav_match.group(1))  # 提取文件中的数字部分
+            new_name = f"audio_normal_{index - 20}.wav"  # 按照要求重命名
+            os.rename(os.path.join(directory, file_name), os.path.join(directory, new_name))
+            print(f"Renamed '{file_name}' to '{new_name}'")
 
-# 训练模型
-x_train, y_train = generate_data()
-x_train_scaled = 10 * x_train  # 创建缩放的输入 10x
-y_train_scaled = y_train  # 缩放后输出依然是 y
+        # 处理 audio_breath 文件
+        breath_match = breath_pattern.match(file_name)
+        if breath_match :
+            index = int(breath_match.group(1))  # 提取文件中的数字部分
+            new_name = f"audio_breath_{index - 20}.wav"  # 按照要求重命名
+            os.rename(os.path.join(directory, file_name), os.path.join(directory, new_name))
+            print(f"Renamed '{file_name}' to '{new_name}'")
 
-for epoch in range(10000):
-    model.train()
-    optimizer.zero_grad()
 
-    # 前向传播
-    outputs = model(x_train)
-    outputs_scaled = model(x_train_scaled)
-
-    # 损失函数：同时让 f(x) = y 和 f(10x) = y
-    loss = criterion(outputs, y_train) + criterion(outputs_scaled, y_train_scaled)
-
-    # 反向传播和优化
-    loss.backward()
-    optimizer.step()
-
-    if (epoch + 1) % 100 == 0:
-        print(f'Epoch [{epoch+1}/1000], Loss: {loss.item():.4f}')
-
-# 测试和可视化结果
-
-model.eval()
-with torch.no_grad():
-    y_pred = model(x_train)
-    y_pred_scaled = model(x_train_scaled)
-    y_pred_scaled_100 =  model(10 * x_train_scaled)
-
-# 绘制结果
-plt.scatter(x_train.numpy(), y_train.numpy(), label='True y = x^2', color='blue')
-plt.scatter(x_train.numpy(), y_pred.numpy(), label='Predicted', color='red')
-plt.scatter(x_train_scaled.numpy(), y_train_scaled.numpy(), label='True y = x^2', color='yellow')
-plt.scatter(x_train_scaled.numpy()*10, y_pred_scaled_100.numpy(), label='Predicted', color='green')
-plt.legend()
-plt.xlabel('x')
-plt.ylabel('y')
-plt.title('Fitting y = x^2 using a Neural Network')
-plt.show()
+# 使用示例：将 'path' 替换为你的文件夹路径
+# directory_path = r"C:\Users\14116\Desktop\dataset"
+# rename_files_in_directory(directory_path)
