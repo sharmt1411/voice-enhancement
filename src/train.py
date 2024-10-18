@@ -403,14 +403,14 @@ if __name__ == '__main__':
     batch_size = 8
     accumulation_steps = 8
     learning_rate = 1e-3
-    eva_interval = 30
+    eva_interval = 100
 
     save_path = '../model_save/'
     save_interval = None
 
     # 设置划分比例
-    train_ratio = 0.9  # 90% 用作训练集
-    val_ratio = 0.1  # 10% 用作验证集
+    train_ratio = 0.95  # 90% 用作训练集
+    val_ratio = 0.05  # 10% 用作验证集
 
     # 调整参数------------------------------------------------------------------------------------
     element_size = 64  # 输入数据的长度, transformer24,   conv和 lstm不需要设置，conv64表示输入分段
@@ -424,7 +424,7 @@ if __name__ == '__main__':
     import time
     current_time = time.localtime()
     time = time.strftime("%m-%d-%H", current_time)
-    desc = time+'dataset-gain1-noise3-normlayer-klloss-hop2'
+    desc = time+'dataset-gain1-noise3-normlayer-klloss-hop2-finaldataset'
     print(f'start Training {desc} model...')
 
     dataset_path = '../dataset/aidataset/'

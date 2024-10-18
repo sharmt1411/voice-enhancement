@@ -27,7 +27,7 @@ def process_data(data, silent_threshold, index):
     """处理音频数据，使用模型推理"""
     sr = RATE  # 采样率
     # 增益倍数
-    gain = 50    # 30目前最好，正常声音不影响,测试关闭音频增益，录制的声音差大概50倍
+    gain = 1    # 30目前最好，正常声音不影响,测试关闭音频增益，录制的声音差大概50倍
     audio_input = np.frombuffer(data, dtype=np.float32)*gain  # float，并归一化到[-1, 1],并增强10倍
 
     # 静音检测
@@ -41,7 +41,7 @@ def process_data(data, silent_threshold, index):
     mel_input = audio_to_mel(audio_input, n_fft, hop_length, sr, num_mel, f_max, )
     # 低频最大值
 
-    mel_input_log = librosa.amplitude_to_db(mel_input, ref=130)  # 训练为ref130
+    mel_input_log = librosa.amplitude_to_db(mel_input, ref=0.6)  # 训练为ref130
     mel_input_log_clip = np.clip(mel_input_log, min_val, 0)
 
     mel_low_freq_max = np.max(mel_input_log_clip[5:18]) # 对应80-300Hz 在fmax=8000，nmel=128
@@ -214,7 +214,7 @@ def load_model():
     model_path = '../model_save'
     global element_size
 
-    model_name = 'model_1014-dataset-gain3-noise3_conv_721665__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
+    model_name = 'model_10-17-11dataset-gain1-noise3-normlayer-klloss-hop2-finaldataset_conv_721921__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
     # 读取参数
     element_size = int(model_name.split('seq_len_')[1].split('_')[0])  # 需要对应训练模型的参数seq_len
     lstm_hidden_size = int(model_name.split('hidden_s_')[1].split('_')[0])
@@ -256,7 +256,7 @@ min_val = -70
 # min_val = -60
 max_val = 0
 ref_normal = 130
-mel_threshold = ref_normal * 10 ** (0.5 * (min_val+27) / 10) * 1.025   # +15对正常影响较小，gain30，ref130
+mel_threshold = ref_normal * 10 ** (0.5 * (min_val+1) / 10) * 1   # +15对正常影响较小，gain30，ref130
 num_mel = 128
 f_max = 8000
 n_fft = 512
