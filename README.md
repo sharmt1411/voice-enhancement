@@ -16,6 +16,7 @@
 
 ### 文件说明
 
+src/audio_process 进行实时转换的测试
 src/train 模型训练脚本
 src/test-case 测试模型效果的脚本
 src/audio_model 模型设计文件
