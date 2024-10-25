@@ -214,7 +214,7 @@ def load_model():
     model_path = '../model_save'
     global element_size
 
-    model_name = 'model_10-17-11dataset-gain1-noise3-normlayer-klloss-hop2-finaldataset_conv_721921__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
+    model_name = 'model_10-18-12dataset-gain1-noise3-normlayer-klloss-hop2-finaldataset-130w_conv_1312129__mel_128_seq_len_64_hidden_s_128_layers_2_dropout_0.2.pth'
     # 读取参数
     element_size = int(model_name.split('seq_len_')[1].split('_')[0])  # 需要对应训练模型的参数seq_len
     lstm_hidden_size = int(model_name.split('hidden_s_')[1].split('_')[0])

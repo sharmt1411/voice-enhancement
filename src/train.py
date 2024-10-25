@@ -424,7 +424,7 @@ if __name__ == '__main__':
     import time
     current_time = time.localtime()
     time = time.strftime("%m-%d-%H", current_time)
-    desc = time+'dataset-gain1-noise3-normlayer-klloss-hop2-finaldataset'
+    desc = time+'dataset-gain1-noise3-normlayer-klloss-hop2-finaldataset-130w'
     print(f'start Training {desc} model...')
 
     dataset_path = '../dataset/aidataset/'
