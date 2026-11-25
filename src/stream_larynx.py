@@ -46,7 +46,7 @@ class StreamingArtificialLarynx:
     Strictly causal, supports arbitrary human vocalizations, dialects, accents,
     non-speech sounds, sighing, and tone transitions.
     """
-    def __init__(self, codebook_path=None, device=None, k=2, tau=0.005, layer=11, continuity_beta=0.08, pitch_shift_steps=0.0, num_threads=4):
+    def __init__(self, codebook_path=None, device=None, k=4, tau=0.015, layer=11, continuity_beta=0.08, pitch_shift_steps=0.0, num_threads=4):
         torch.set_num_threads(num_threads)
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -159,7 +159,7 @@ class StreamingArtificialLarynx:
             feat_norm = F.normalize(feat_tgt, p=2, dim=-1)
             sim = torch.matmul(feat_norm, self.target_feats.t()) # [T_tgt, N]
             
-            # Viterbi continuity regularization to eliminate frame jumping stutter
+            # Forward-only Viterbi continuity regularization to eliminate frame jumping & freeze traps
             mels_chunk = []
             N = self.target_feats.shape[0]
             for t in range(sim.shape[0]):
@@ -167,12 +167,15 @@ class StreamingArtificialLarynx:
                 if self.prev_target_idx is not None and self.continuity_beta > 0:
                     target_center = self.prev_target_idx + 1
                     if 0 <= target_center < N:
-                        window_r = 6
-                        start_w = max(0, target_center - window_r)
-                        end_w = min(N, target_center + window_r + 1)
-                        delta = torch.arange(start_w, end_w, device=self.device) - target_center
-                        bonus = self.continuity_beta * torch.exp(- (delta**2) / (2.0 * (1.8**2)))
-                        curr_sim[start_w:end_w] += bonus
+                        # Forward progression only: reward target_center to target_center + 6
+                        w_fwd = 6
+                        end_w = min(N, target_center + w_fwd + 1)
+                        delta = torch.arange(target_center, end_w, device=self.device) - target_center
+                        bonus = self.continuity_beta * torch.exp(- (delta**2) / (2.0 * (2.0**2)))
+                        curr_sim[target_center:end_w] += bonus
+                        
+                        # Anti-freeze penalty for staying stationary on previous frame
+                        curr_sim[self.prev_target_idx] -= 0.03
                         
                 topk_sim, topk_idx = torch.topk(curr_sim, k=self.k, dim=-1)
                 weights = F.softmax(topk_sim / self.tau, dim=-1)
@@ -254,9 +257,13 @@ class StreamingArtificialLarynx:
         mel_high = F.conv1d(F.pad(full_mel_3d[:, 19:, :], (2, 2), mode="replicate"), self.smooth_kernel_high, groups=81)
         mel_clean = torch.cat([mel_low, mel_high], dim=1).squeeze(0).transpose(0, 1) # [T_m, 100]
         
-        # [2] Subtle de-nasal balance: gently trim 350-600Hz (channels 10-15) by 0.6dB to eliminate stuffy nose
-        # and preserve 1.2k-4.5kHz oral cavity radiance and transparency
-        mel_clean[:, 10:16] = mel_clean[:, 10:16] - 0.6
+        # [2] Targeted Anti-Nasal & Oral Open Clarity EQ Filter:
+        # 1. Suppress nasal cavity resonance (300Hz-600Hz, channels 9-17) by 1.8dB
+        ch_idx = torch.arange(100, device=self.device).float()
+        nasal_cut = 1.8 * torch.exp(-((ch_idx - 13.0)**2) / (2.0 * (4.0**2)))
+        # 2. Boost oral open radiance and projection (2.2kHz-4.0kHz, channels 45-65) by +0.9dB
+        oral_boost = 0.9 * torch.exp(-((ch_idx - 52.0)**2) / (2.0 * (8.0**2)))
+        mel_clean = mel_clean - nasal_cut.unsqueeze(0) + oral_boost.unsqueeze(0)
         
         # [3] Neural Vocos Decoding (pristine phase, smooth transitions without hard step gate or phase tear)
         with torch.no_grad():
