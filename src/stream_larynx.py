@@ -40,7 +40,7 @@ def low_shelf_sos(f0, gain_db, fs=24000):
     b2 =    A*( (A+1) - (A-1)*cos_w0 - 2*np.sqrt(A)*alpha )
     a0 =        (A+1) + (A-1)*cos_w0 + 2*np.sqrt(A)*alpha
     a1 =   -2*( (A-1) + (A+1)*cos_w0                       )
-    a2 =        (A+1) + (A-1)*cos_w0 - 2*np.sqrt(A)*alpha
+    a2 =        (A+1) - (A-1)*cos_w0 - 2*np.sqrt(A)*alpha
     return np.array([[b0/a0, b1/a0, b2/a0, 1.0, a1/a0, a2/a0]])
 
 def high_shelf_sos(f0, gain_db, fs=24000):
@@ -64,7 +64,7 @@ class StreamingArtificialLarynx:
     Strictly causal, supports arbitrary human vocalizations, dialects, accents,
     non-speech sounds, sighing, and tone transitions.
     """
-    def __init__(self, codebook_path=None, device=None, k=4, tau=0.015, layer=11, pitch_shift_steps=0.0, num_threads=4):
+    def __init__(self, codebook_path=None, device=None, k=4, tau=0.015, layer=11, continuity_beta=0.12, pitch_shift_steps=1.8, num_threads=4):
         torch.set_num_threads(num_threads)
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -92,10 +92,12 @@ class StreamingArtificialLarynx:
         self.k = k
         self.tau = tau
         self.layer = layer
+        self.continuity_beta = continuity_beta
         self.pitch_shift_steps = pitch_shift_steps
+        self.prev_target_idx = None
         
-        # 3-frame Mel temporal smoothing kernel
-        self.smooth_kernel = torch.tensor([0.22, 0.56, 0.22], device=self.device).view(1, 1, 3).repeat(100, 1, 1)
+        # 7-frame Mel temporal smoothing kernel (spans ~75ms for fluent coarticulation)
+        self.smooth_kernel = torch.tensor([0.05, 0.12, 0.20, 0.26, 0.20, 0.12, 0.05], device=self.device).view(1, 1, 7).repeat(100, 1, 1)
         
         # Acoustic mastering filter coefficients
         self.sos_sub = butter(2, 45, btype="highpass", fs=24000, output="sos")
@@ -121,7 +123,8 @@ class StreamingArtificialLarynx:
 
     def process_mel_stream(self, chunk_raw_np, sr=24000, left_ctx_samples=0):
         """
-        Extract causal WavLM features and retrieve kNN target Mel frames for a chunk.
+        Extract causal WavLM features and retrieve kNN target Mel frames for a chunk
+        with Viterbi temporal continuity regularization.
         """
         chunk_t = torch.from_numpy(chunk_raw_np).float().unsqueeze(0).to(self.device)
         
@@ -158,10 +161,30 @@ class StreamingArtificialLarynx:
                 feat_tgt = feat_interp
                 
             feat_norm = F.normalize(feat_tgt, p=2, dim=-1)
-            sim = torch.matmul(feat_norm, self.target_feats.t())
-            topk_sim, topk_idx = torch.topk(sim, k=self.k, dim=-1)
-            weights = F.softmax(topk_sim / self.tau, dim=-1)
-            out_mel = torch.sum(self.target_mels[topk_idx] * weights.unsqueeze(-1), dim=1) # [T_tgt, 100]
+            sim = torch.matmul(feat_norm, self.target_feats.t()) # [T_tgt, N]
+            
+            # Viterbi continuity regularization to eliminate frame jumping stutter
+            mels_chunk = []
+            N = self.target_feats.shape[0]
+            for t in range(sim.shape[0]):
+                curr_sim = sim[t].clone()
+                if self.prev_target_idx is not None and self.continuity_beta > 0:
+                    target_center = self.prev_target_idx + 1
+                    if 0 <= target_center < N:
+                        window_r = 8
+                        start_w = max(0, target_center - window_r)
+                        end_w = min(N, target_center + window_r + 1)
+                        delta = torch.arange(start_w, end_w, device=self.device) - target_center
+                        bonus = self.continuity_beta * torch.exp(- (delta**2) / (2.0 * (2.0**2)))
+                        curr_sim[start_w:end_w] += bonus
+                        
+                topk_sim, topk_idx = torch.topk(curr_sim, k=self.k, dim=-1)
+                weights = F.softmax(topk_sim / self.tau, dim=-1)
+                mel_t = torch.sum(self.target_mels[topk_idx] * weights.unsqueeze(-1), dim=0)
+                mels_chunk.append(mel_t)
+                self.prev_target_idx = topk_idx[0].item()
+                
+            out_mel = torch.stack(mels_chunk, dim=0)
             
         return out_mel
 
@@ -187,6 +210,7 @@ class StreamingArtificialLarynx:
         Process an entire audio file using causal chunk-by-chunk streaming with left lookback context.
         Returns: (output_wav_path, end_to_end_rtf, avg_chunk_latency_ms)
         """
+        self.prev_target_idx = None
         y_np, sr = sf.read(input_wav_path)
         if y_np.ndim > 1:
             y_np = y_np.mean(axis=1)
@@ -214,10 +238,10 @@ class StreamingArtificialLarynx:
             all_mels.append(out_mel)
             latencies.append(time.time() - t0)
             
-        # Continuous Mel temporal smoothing
+        # 7-frame Mel coarticulation temporal smoothing
         full_mel = torch.cat(all_mels, dim=0) # [Total_T, 100]
         full_mel_3d = full_mel.transpose(0, 1).unsqueeze(0)
-        mel_smooth = F.conv1d(F.pad(full_mel_3d, (1, 1), mode="replicate"), self.smooth_kernel, groups=100)
+        mel_smooth = F.conv1d(F.pad(full_mel_3d, (3, 3), mode="replicate"), self.smooth_kernel, groups=100)
         
         with torch.no_grad():
             raw_audio = self.vocos.decode(mel_smooth)[0].squeeze(0).cpu().numpy()
