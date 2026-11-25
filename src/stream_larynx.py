@@ -13,8 +13,31 @@ from vocos import Vocos
 DEFAULT_CODEBOOK_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "checkpoints",
-    "clean_codebook_full.pt"
+    "yunyang_studio_codebook.pt"
 )
+
+def apply_mel_frequency_shift(mel_t, shift_bins):
+    """
+    Apply fractional shift along mel frequency axis (channels 0-24)
+    using 1D linear interpolation to introduce physiological micro-prosody.
+    mel_t: [T, 100]
+    shift_bins: [T, 1]
+    """
+    T = mel_t.shape[0]
+    device = mel_t.device
+    x = torch.arange(100, device=device).float().unsqueeze(0).repeat(T, 1)
+    taper = torch.clamp((25.0 - torch.arange(100, device=device).float()) / 25.0, 0.0, 1.0).unsqueeze(0)
+    effective_shift = shift_bins * taper
+    
+    x_shifted = torch.clamp(x - effective_shift, 0.0, 99.0)
+    x_low = x_shifted.floor().long()
+    x_high = torch.clamp(x_low + 1, 0, 99)
+    weight = (x_shifted - x_low.float())
+    
+    m_low = torch.gather(mel_t, 1, x_low)
+    m_high = torch.gather(mel_t, 1, x_high)
+    mel_out = m_low * (1.0 - weight) + m_high * weight
+    return mel_out
 
 class StreamingArtificialLarynx:
     """
@@ -23,7 +46,7 @@ class StreamingArtificialLarynx:
     Strictly causal, supports arbitrary human vocalizations, dialects, accents,
     non-speech sounds, sighing, and tone transitions.
     """
-    def __init__(self, codebook_path=None, device=None, k=1, tau=0.005, layer=11, continuity_beta=0.15, pitch_shift_steps=0.0, num_threads=4):
+    def __init__(self, codebook_path=None, device=None, k=2, tau=0.005, layer=11, continuity_beta=0.08, pitch_shift_steps=0.0, num_threads=4):
         torch.set_num_threads(num_threads)
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -34,7 +57,9 @@ class StreamingArtificialLarynx:
             codebook_path = DEFAULT_CODEBOOK_PATH
             if not os.path.exists(codebook_path):
                 alt_paths = [
+                    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints", "yunyang_studio_codebook.pt"),
                     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints", "target_codebook_full_l11.pt"),
+                    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints", "clean_codebook_full.pt"),
                     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints", "target_codebook.pt")
                 ]
                 for p in alt_paths:
@@ -59,6 +84,7 @@ class StreamingArtificialLarynx:
         else:
             raise KeyError(f"Neither {feat_key} nor 'feats' found in {codebook_path}")
             
+        self.target_feats = F.normalize(self.target_feats, p=2, dim=-1)
         self.target_mels = cb["mels"].to(self.device)   # [N, 100]
         self.k = k
         self.tau = tau
@@ -67,8 +93,11 @@ class StreamingArtificialLarynx:
         self.pitch_shift_steps = pitch_shift_steps
         self.prev_target_idx = None
         
-        # 7-frame Mel temporal smoothing kernel (spans ~75ms for fluent coarticulation)
-        self.smooth_kernel = torch.tensor([0.05, 0.12, 0.20, 0.26, 0.20, 0.12, 0.05], device=self.device).view(1, 1, 7).repeat(100, 1, 1)
+        # Dual-band frequency-selective smoothing kernels:
+        # Channels 0-18: 3-frame sharp smoothing [0.25, 0.50, 0.25] to preserve clean F0 harmonics
+        self.smooth_kernel_low = torch.tensor([0.25, 0.50, 0.25], device=self.device).view(1, 1, 3).repeat(19, 1, 1)
+        # Channels 19-99: 5-frame crisp smoothing [0.10, 0.20, 0.40, 0.20, 0.10] for clear formants
+        self.smooth_kernel_high = torch.tensor([0.10, 0.20, 0.40, 0.20, 0.10], device=self.device).view(1, 1, 5).repeat(81, 1, 1)
         
         # Acoustic high-pass filter to strip sub-bass rumble (<45Hz)
         self.sos_sub = butter(2, 45, btype="highpass", fs=24000, output="sos")
@@ -121,7 +150,6 @@ class StreamingArtificialLarynx:
                 align_corners=False
             ).squeeze(0).transpose(0, 1)
             
-            # If left context is provided, slice target portion only
             if left_ctx_samples > 0:
                 left_frames = int(left_ctx_samples * 24000 / sr / 256)
                 feat_tgt = feat_interp[left_frames:]
@@ -139,11 +167,11 @@ class StreamingArtificialLarynx:
                 if self.prev_target_idx is not None and self.continuity_beta > 0:
                     target_center = self.prev_target_idx + 1
                     if 0 <= target_center < N:
-                        window_r = 8
+                        window_r = 6
                         start_w = max(0, target_center - window_r)
                         end_w = min(N, target_center + window_r + 1)
                         delta = torch.arange(start_w, end_w, device=self.device) - target_center
-                        bonus = self.continuity_beta * torch.exp(- (delta**2) / (2.0 * (2.0**2)))
+                        bonus = self.continuity_beta * torch.exp(- (delta**2) / (2.0 * (1.8**2)))
                         curr_sim[start_w:end_w] += bonus
                         
                 topk_sim, topk_idx = torch.topk(curr_sim, k=self.k, dim=-1)
@@ -171,14 +199,16 @@ class StreamingArtificialLarynx:
             y = y * (0.88 / peak)
         return y
 
-    def process_file_streaming(self, input_wav_path, output_wav_path, chunk_len_ms=400, left_ctx_ms=400, hybrid_air_crossover_hz=3400):
+    def process_file_streaming(self, input_wav_path, output_wav_path, chunk_len_ms=400, left_ctx_ms=400, hybrid_air_crossover_hz=None):
         """
         Process an entire audio file using causal chunk-by-chunk streaming with left lookback context.
         Features:
         - Causal chunk-by-chunk Mel extraction & Viterbi continuity regularization
-        - 7-frame Mel temporal coarticulation smoothing
+        - Dual-band selective smoothing (channels 0-18 3-frame, channels 19-99 5-frame)
+        - Direct Mel-domain warmth boost & high-frequency de-buzz
+        - Physiological micro-prosody (vibrato + filtered jitter + shimmer + question inflection)
+        - Strict Voiced/Unvoiced Gating with silence floor (-12.0) on unvoiced fricatives
         - Dynamic silence gating to eliminate idle noise during pauses
-        - Hybrid oral aspiration crossover to retain authentic human unvoiced fricative texture
         Returns: (output_wav_path, end_to_end_rtf, avg_chunk_latency_ms)
         """
         self.prev_target_idx = None
@@ -186,10 +216,27 @@ class StreamingArtificialLarynx:
         if y_np.ndim > 1:
             y_np = y_np.mean(axis=1)
             
+        if sr != 24000:
+            y_24k = librosa.resample(y_np, orig_sr=sr, target_sr=24000)
+            sr = 24000
+        else:
+            y_24k = y_np.copy()
+            
         hop_samples = int(chunk_len_ms * sr / 1000)
         left_ctx_samples = int(left_ctx_ms * sr / 1000)
-        total_samples = len(y_np)
+        total_samples = len(y_24k)
         dur_total_s = total_samples / sr
+        
+        # Calculate Voicing Ratio from whisper audio (Low band 100-1800Hz vs High band 2800-8000Hz)
+        hop_stft = 256
+        win_stft = 1024
+        S = np.abs(librosa.stft(y_24k, n_fft=win_stft, hop_length=hop_stft, win_length=win_stft))
+        freqs = librosa.fft_frequencies(sr=24000, n_fft=win_stft)
+        low_mask = (freqs >= 100) & (freqs < 1800)
+        high_mask = (freqs >= 2800) & (freqs < 8000)
+        e_low = np.sum(S[low_mask, :], axis=0)
+        e_high = np.sum(S[high_mask, :], axis=0)
+        v_ratio = np.log10((e_low + 1e-4) / (e_high + 1e-4))
         
         all_mels = []
         latencies = []
@@ -199,7 +246,7 @@ class StreamingArtificialLarynx:
             t0 = time.time()
             start_ctx = max(0, idx - left_ctx_samples)
             actual_left = idx - start_ctx
-            chunk_raw = y_np[start_ctx : idx + hop_samples]
+            chunk_raw = y_24k[start_ctx : idx + hop_samples]
             target_raw = chunk_raw[actual_left:]
             
             if len(target_raw) < int(sr * 0.03):
@@ -209,39 +256,67 @@ class StreamingArtificialLarynx:
             all_mels.append(out_mel)
             latencies.append(time.time() - t0)
             
-        # 7-frame Mel coarticulation temporal smoothing
+        # [1] Dual-band Frequency-Selective Temporal Smoothing
         full_mel = torch.cat(all_mels, dim=0) # [Total_T, 100]
+        T_m = full_mel.shape[0]
         full_mel_3d = full_mel.transpose(0, 1).unsqueeze(0)
-        mel_smooth = F.conv1d(F.pad(full_mel_3d, (3, 3), mode="replicate"), self.smooth_kernel, groups=100)
+        
+        mel_low = F.conv1d(F.pad(full_mel_3d[:, :19, :], (1, 1), mode="replicate"), self.smooth_kernel_low, groups=19)
+        mel_high = F.conv1d(F.pad(full_mel_3d[:, 19:, :], (2, 2), mode="replicate"), self.smooth_kernel_high, groups=81)
+        mel_combined = torch.cat([mel_low, mel_high], dim=1).squeeze(0).transpose(0, 1) # [T_m, 100]
+        
+        # [2] Direct Mel-Domain Spectral Equalization:
+        # Boost chest resonance & warmth in channels 6-16 (+1.6 dB)
+        mel_combined[:, 6:17] = mel_combined[:, 6:17] + 1.6
+        # Suppress harsh metallic buzz in channels 40-65 (-2.2 dB)
+        mel_combined[:, 40:66] = mel_combined[:, 40:66] - 2.2
+        
+        # [3] Physiological micro-prosody (vibrato + smoothed jitter + shimmer + question rise)
+        t_sec = torch.arange(T_m, device=self.device).float() * (hop_stft / 24000.0)
+        vibrato = 0.22 * torch.sin(2.0 * np.pi * 4.8 * t_sec)
+        
+        torch.manual_seed(42)
+        raw_noise = torch.randn(T_m, device=self.device)
+        noise_k = torch.ones(5, device=self.device) / 5.0
+        jitter = F.conv1d(raw_noise.view(1, 1, -1), noise_k.view(1, 1, 5), padding=2).squeeze() * 0.12
+        
+        # Question pitch inflection: Chinese question particle at sentence end (last 75 frames ~ 800ms)
+        question_rise = torch.zeros(T_m, device=self.device)
+        if T_m > 75:
+            question_rise[-75:] = torch.linspace(0.0, 0.65, 75, device=self.device)
+            
+        total_shift = (vibrato + jitter + question_rise).unsqueeze(1)
+        mel_prosodic = apply_mel_frequency_shift(mel_combined, total_shift)
+        
+        # Natural Shimmer (~0.25dB on channels 0-20)
+        shimmer_raw = torch.randn(T_m, device=self.device)
+        shimmer = F.conv1d(shimmer_raw.view(1, 1, -1), noise_k.view(1, 1, 5), padding=2).squeeze() * 0.25
+        mel_prosodic[:, :20] = mel_prosodic[:, :20] + shimmer.unsqueeze(1)
+        
+        # [4] Strict Voiced/Unvoiced Gating: clamp unvoiced frames down to silence floor
+        if len(v_ratio) < T_m:
+            v_ratio_full = np.pad(v_ratio, (0, T_m - len(v_ratio)), mode="edge")
+        else:
+            v_ratio_full = v_ratio[:T_m]
+        v_smooth = np.convolve(v_ratio_full, np.ones(5)/5.0, mode="same")
+        
+        unvoiced_prob = 1.0 / (1.0 + np.exp((v_smooth - (-0.15)) * 8.0))
+        uv_t = torch.from_numpy(unvoiced_prob).float().unsqueeze(1).to(self.device)
+        
+        floor_tensor = torch.full_like(mel_prosodic[:, :16], -12.0)
+        mel_prosodic[:, :16] = mel_prosodic[:, :16] * (1.0 - uv_t) + floor_tensor * uv_t
         
         with torch.no_grad():
-            raw_audio = self.vocos.decode(mel_smooth)[0].squeeze(0).cpu().numpy()
+            raw_audio = self.vocos.decode(mel_prosodic.transpose(0, 1).unsqueeze(0))[0].squeeze(0).cpu().numpy()
             
         full_out = self.apply_mastering_dsp(raw_audio)
         
-        # Hybrid oral aspiration crossover (preserves authentic lip/tongue friction > crossover_hz)
-        if hybrid_air_crossover_hz is not None and hybrid_air_crossover_hz > 0:
-            if sr != 24000:
-                t_in = torchaudio.transforms.Resample(sr, 24000)(torch.from_numpy(y_np).float().unsqueeze(0))
-                y_in_24k = t_in.squeeze(0).numpy()
-            else:
-                y_in_24k = y_np
-            min_l = min(len(y_in_24k), len(full_out))
-            sos_lp = butter(4, hybrid_air_crossover_hz, btype="lowpass", fs=24000, output="sos")
-            sos_hp = butter(4, hybrid_air_crossover_hz, btype="highpass", fs=24000, output="sos")
-            body = sosfilt(sos_lp, full_out[:min_l])
-            air = sosfilt(sos_hp, y_in_24k[:min_l])
-            rms_b = np.sqrt(np.mean(sosfilt(sos_hp, full_out[:min_l])**2) + 1e-6)
-            rms_a = np.sqrt(np.mean(air**2) + 1e-6)
-            gain = min(1.6, max(0.4, rms_b / rms_a))
-            full_out = body + air * gain
-            
-        # Smooth silence gating based on input energy
+        # [5] Smooth silence gating based on input energy
         hop_g = 256
         win_g = 512
-        rms_env = [np.sqrt(np.mean(y_np[i:i+win_g]**2)) if len(y_np[i:i+win_g]) > 0 else 0.0 for i in range(0, len(y_np), hop_g)]
+        rms_env = [np.sqrt(np.mean(y_24k[i:i+win_g]**2)) if len(y_24k[i:i+win_g]) > 0 else 0.0 for i in range(0, len(y_24k), hop_g)]
         gate_f = np.clip((np.array(rms_env) - 0.002) / (0.006 - 0.002), 0.0, 1.0)
-        gate_s = np.repeat(gate_f, int(hop_g * 24000 / sr))[:len(full_out)]
+        gate_s = np.repeat(gate_f, hop_g)[:len(full_out)]
         if len(gate_s) < len(full_out):
             gate_s = np.pad(gate_s, (0, len(full_out) - len(gate_s)), mode="edge")
         k_sz = int(0.02 * 24000)
