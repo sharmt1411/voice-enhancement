@@ -13,49 +13,8 @@ from vocos import Vocos
 DEFAULT_CODEBOOK_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "checkpoints",
-    "target_codebook_full_l11.pt"
+    "clean_codebook_full.pt"
 )
-
-# Standard Audio EQ Biquad cookbook functions for mastering
-def peaking_eq_sos(f0, Q, gain_db, fs=24000):
-    A = 10**(gain_db / 40.0)
-    w0 = 2 * np.pi * f0 / fs
-    alpha = np.sin(w0) / (2 * Q)
-    b0 = 1 + alpha * A
-    b1 = -2 * np.cos(w0)
-    b2 = 1 - alpha * A
-    a0 = 1 + alpha / A
-    a1 = -2 * np.cos(w0)
-    a2 = 1 - alpha / A
-    return np.array([[b0/a0, b1/a0, b2/a0, 1.0, a1/a0, a2/a0]])
-
-def low_shelf_sos(f0, gain_db, fs=24000):
-    A = 10**(gain_db / 40.0)
-    w0 = 2 * np.pi * f0 / fs
-    cos_w0 = np.cos(w0)
-    sin_w0 = np.sin(w0)
-    alpha = sin_w0 / 2 * np.sqrt((A + 1/A)*(1/0.707 - 1) + 2)
-    b0 =    A*( (A+1) - (A-1)*cos_w0 + 2*np.sqrt(A)*alpha )
-    b1 =  2*A*( (A-1) - (A+1)*cos_w0                       )
-    b2 =    A*( (A+1) - (A-1)*cos_w0 - 2*np.sqrt(A)*alpha )
-    a0 =        (A+1) + (A-1)*cos_w0 + 2*np.sqrt(A)*alpha
-    a1 =   -2*( (A-1) + (A+1)*cos_w0                       )
-    a2 =        (A+1) - (A-1)*cos_w0 - 2*np.sqrt(A)*alpha
-    return np.array([[b0/a0, b1/a0, b2/a0, 1.0, a1/a0, a2/a0]])
-
-def high_shelf_sos(f0, gain_db, fs=24000):
-    A = 10**(gain_db / 40.0)
-    w0 = 2 * np.pi * f0 / fs
-    cos_w0 = np.cos(w0)
-    sin_w0 = np.sin(w0)
-    alpha = sin_w0 / 2 * np.sqrt((A + 1/A)*(1/0.707 - 1) + 2)
-    b0 =    A*( (A+1) + (A-1)*cos_w0 + 2*np.sqrt(A)*alpha )
-    b1 = -2*A*( (A-1) + (A+1)*cos_w0                       )
-    b2 =    A*( (A+1) + (A-1)*cos_w0 - 2*np.sqrt(A)*alpha )
-    a0 =        (A+1) - (A-1)*cos_w0 + 2*np.sqrt(A)*alpha
-    a1 =    2*( (A-1) - (A+1)*cos_w0                       )
-    a2 =        (A+1) - (A-1)*cos_w0 - 2*np.sqrt(A)*alpha
-    return np.array([[b0/a0, b1/a0, b2/a0, 1.0, a1/a0, a2/a0]])
 
 class StreamingArtificialLarynx:
     """
@@ -64,7 +23,7 @@ class StreamingArtificialLarynx:
     Strictly causal, supports arbitrary human vocalizations, dialects, accents,
     non-speech sounds, sighing, and tone transitions.
     """
-    def __init__(self, codebook_path=None, device=None, k=4, tau=0.015, layer=11, continuity_beta=0.12, pitch_shift_steps=1.8, num_threads=4):
+    def __init__(self, codebook_path=None, device=None, k=1, tau=0.005, layer=11, continuity_beta=0.15, pitch_shift_steps=0.0, num_threads=4):
         torch.set_num_threads(num_threads)
         if device is None:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -74,9 +33,14 @@ class StreamingArtificialLarynx:
         if codebook_path is None:
             codebook_path = DEFAULT_CODEBOOK_PATH
             if not os.path.exists(codebook_path):
-                alt_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints", "target_codebook.pt")
-                if os.path.exists(alt_path):
-                    codebook_path = alt_path
+                alt_paths = [
+                    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints", "target_codebook_full_l11.pt"),
+                    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "checkpoints", "target_codebook.pt")
+                ]
+                for p in alt_paths:
+                    if os.path.exists(p):
+                        codebook_path = p
+                        break
 
         print(f"[ArtificialLarynx] Initializing on {self.device} (CPU threads: {torch.get_num_threads()})...")
         self.wavlm = WavLMModel.from_pretrained("microsoft/wavlm-base").to(self.device)
@@ -87,7 +51,14 @@ class StreamingArtificialLarynx:
         
         print(f"[ArtificialLarynx] Loading codebook from {codebook_path}...")
         cb = torch.load(codebook_path, map_location=self.device)
-        self.target_feats = cb["feats"].to(self.device) # [N, 768]
+        feat_key = f"feats_l{layer}"
+        if feat_key in cb:
+            self.target_feats = cb[feat_key].to(self.device)
+        elif "feats" in cb:
+            self.target_feats = cb["feats"].to(self.device)
+        else:
+            raise KeyError(f"Neither {feat_key} nor 'feats' found in {codebook_path}")
+            
         self.target_mels = cb["mels"].to(self.device)   # [N, 100]
         self.k = k
         self.tau = tau
@@ -99,11 +70,8 @@ class StreamingArtificialLarynx:
         # 7-frame Mel temporal smoothing kernel (spans ~75ms for fluent coarticulation)
         self.smooth_kernel = torch.tensor([0.05, 0.12, 0.20, 0.26, 0.20, 0.12, 0.05], device=self.device).view(1, 1, 7).repeat(100, 1, 1)
         
-        # Acoustic mastering filter coefficients
+        # Acoustic high-pass filter to strip sub-bass rumble (<45Hz)
         self.sos_sub = butter(2, 45, btype="highpass", fs=24000, output="sos")
-        self.sos_warmth = low_shelf_sos(180, 2.0, fs=24000)
-        self.sos_debuzz = peaking_eq_sos(2500, 1.4, -3.0, fs=24000)
-        self.sos_air = high_shelf_sos(6000, 2.0, fs=24000)
         
         print(f"[ArtificialLarynx] Ready! Codebook contains {self.target_feats.shape[0]} natural speech frames.")
         
@@ -190,13 +158,11 @@ class StreamingArtificialLarynx:
 
     def apply_mastering_dsp(self, audio_np):
         """
-        Apply biquad mastering chain and pitch enhancement.
+        Apply clean acoustic mastering chain.
+        - Highpass 45Hz to eliminate low sub-bass rumble/DC offset
+        - Transparent peak normalization to -1.1 dBFS (0.88)
         """
         y = sosfilt(self.sos_sub, audio_np)
-        y = sosfilt(self.sos_warmth, y)
-        y = sosfilt(self.sos_debuzz, y)
-        y = sosfilt(self.sos_air, y)
-        
         if self.pitch_shift_steps != 0.0:
             y = librosa.effects.pitch_shift(y, sr=24000, n_steps=self.pitch_shift_steps)
             
@@ -205,9 +171,14 @@ class StreamingArtificialLarynx:
             y = y * (0.88 / peak)
         return y
 
-    def process_file_streaming(self, input_wav_path, output_wav_path, chunk_len_ms=400, left_ctx_ms=400):
+    def process_file_streaming(self, input_wav_path, output_wav_path, chunk_len_ms=400, left_ctx_ms=400, hybrid_air_crossover_hz=3400):
         """
         Process an entire audio file using causal chunk-by-chunk streaming with left lookback context.
+        Features:
+        - Causal chunk-by-chunk Mel extraction & Viterbi continuity regularization
+        - 7-frame Mel temporal coarticulation smoothing
+        - Dynamic silence gating to eliminate idle noise during pauses
+        - Hybrid oral aspiration crossover to retain authentic human unvoiced fricative texture
         Returns: (output_wav_path, end_to_end_rtf, avg_chunk_latency_ms)
         """
         self.prev_target_idx = None
@@ -248,6 +219,39 @@ class StreamingArtificialLarynx:
             
         full_out = self.apply_mastering_dsp(raw_audio)
         
+        # Hybrid oral aspiration crossover (preserves authentic lip/tongue friction > crossover_hz)
+        if hybrid_air_crossover_hz is not None and hybrid_air_crossover_hz > 0:
+            if sr != 24000:
+                t_in = torchaudio.transforms.Resample(sr, 24000)(torch.from_numpy(y_np).float().unsqueeze(0))
+                y_in_24k = t_in.squeeze(0).numpy()
+            else:
+                y_in_24k = y_np
+            min_l = min(len(y_in_24k), len(full_out))
+            sos_lp = butter(4, hybrid_air_crossover_hz, btype="lowpass", fs=24000, output="sos")
+            sos_hp = butter(4, hybrid_air_crossover_hz, btype="highpass", fs=24000, output="sos")
+            body = sosfilt(sos_lp, full_out[:min_l])
+            air = sosfilt(sos_hp, y_in_24k[:min_l])
+            rms_b = np.sqrt(np.mean(sosfilt(sos_hp, full_out[:min_l])**2) + 1e-6)
+            rms_a = np.sqrt(np.mean(air**2) + 1e-6)
+            gain = min(1.6, max(0.4, rms_b / rms_a))
+            full_out = body + air * gain
+            
+        # Smooth silence gating based on input energy
+        hop_g = 256
+        win_g = 512
+        rms_env = [np.sqrt(np.mean(y_np[i:i+win_g]**2)) if len(y_np[i:i+win_g]) > 0 else 0.0 for i in range(0, len(y_np), hop_g)]
+        gate_f = np.clip((np.array(rms_env) - 0.002) / (0.006 - 0.002), 0.0, 1.0)
+        gate_s = np.repeat(gate_f, int(hop_g * 24000 / sr))[:len(full_out)]
+        if len(gate_s) < len(full_out):
+            gate_s = np.pad(gate_s, (0, len(full_out) - len(gate_s)), mode="edge")
+        k_sz = int(0.02 * 24000)
+        gate_smooth = np.convolve(gate_s, np.ones(k_sz)/k_sz, mode="same")
+        full_out = full_out * (gate_smooth * 0.95 + 0.05)
+        
+        peak = np.max(np.abs(full_out))
+        if peak > 0:
+            full_out = full_out * (0.88 / peak)
+            
         total_time = time.time() - t_start
         overall_rtf = total_time / max(dur_total_s, 1e-4)
         avg_chunk_lat = (sum(latencies) / len(latencies)) * 1000 if latencies else 0.0
