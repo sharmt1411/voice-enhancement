@@ -227,17 +227,6 @@ class StreamingArtificialLarynx:
         total_samples = len(y_24k)
         dur_total_s = total_samples / sr
         
-        # Calculate Voicing Ratio from whisper audio (Low band 100-1800Hz vs High band 2800-8000Hz)
-        hop_stft = 256
-        win_stft = 1024
-        S = np.abs(librosa.stft(y_24k, n_fft=win_stft, hop_length=hop_stft, win_length=win_stft))
-        freqs = librosa.fft_frequencies(sr=24000, n_fft=win_stft)
-        low_mask = (freqs >= 100) & (freqs < 1800)
-        high_mask = (freqs >= 2800) & (freqs < 8000)
-        e_low = np.sum(S[low_mask, :], axis=0)
-        e_high = np.sum(S[high_mask, :], axis=0)
-        v_ratio = np.log10((e_low + 1e-4) / (e_high + 1e-4))
-        
         all_mels = []
         latencies = []
         
@@ -263,57 +252,21 @@ class StreamingArtificialLarynx:
         
         mel_low = F.conv1d(F.pad(full_mel_3d[:, :19, :], (1, 1), mode="replicate"), self.smooth_kernel_low, groups=19)
         mel_high = F.conv1d(F.pad(full_mel_3d[:, 19:, :], (2, 2), mode="replicate"), self.smooth_kernel_high, groups=81)
-        mel_combined = torch.cat([mel_low, mel_high], dim=1).squeeze(0).transpose(0, 1) # [T_m, 100]
+        mel_clean = torch.cat([mel_low, mel_high], dim=1).squeeze(0).transpose(0, 1) # [T_m, 100]
         
-        # [2] Direct Mel-Domain Spectral Equalization:
-        # Boost chest resonance & warmth in channels 6-16 (+1.6 dB)
-        mel_combined[:, 6:17] = mel_combined[:, 6:17] + 1.6
-        # Suppress harsh metallic buzz in channels 40-65 (-2.2 dB)
-        mel_combined[:, 40:66] = mel_combined[:, 40:66] - 2.2
+        # [2] Subtle de-nasal balance: gently trim 350-600Hz (channels 10-15) by 0.6dB to eliminate stuffy nose
+        # and preserve 1.2k-4.5kHz oral cavity radiance and transparency
+        mel_clean[:, 10:16] = mel_clean[:, 10:16] - 0.6
         
-        # [3] Physiological micro-prosody (vibrato + smoothed jitter + shimmer + question rise)
-        t_sec = torch.arange(T_m, device=self.device).float() * (hop_stft / 24000.0)
-        vibrato = 0.22 * torch.sin(2.0 * np.pi * 4.8 * t_sec)
-        
-        torch.manual_seed(42)
-        raw_noise = torch.randn(T_m, device=self.device)
-        noise_k = torch.ones(5, device=self.device) / 5.0
-        jitter = F.conv1d(raw_noise.view(1, 1, -1), noise_k.view(1, 1, 5), padding=2).squeeze() * 0.12
-        
-        # Question pitch inflection: Chinese question particle at sentence end (last 75 frames ~ 800ms)
-        question_rise = torch.zeros(T_m, device=self.device)
-        if T_m > 75:
-            question_rise[-75:] = torch.linspace(0.0, 0.65, 75, device=self.device)
-            
-        total_shift = (vibrato + jitter + question_rise).unsqueeze(1)
-        mel_prosodic = apply_mel_frequency_shift(mel_combined, total_shift)
-        
-        # Natural Shimmer (~0.25dB on channels 0-20)
-        shimmer_raw = torch.randn(T_m, device=self.device)
-        shimmer = F.conv1d(shimmer_raw.view(1, 1, -1), noise_k.view(1, 1, 5), padding=2).squeeze() * 0.25
-        mel_prosodic[:, :20] = mel_prosodic[:, :20] + shimmer.unsqueeze(1)
-        
-        # [4] Strict Voiced/Unvoiced Gating: clamp unvoiced frames down to silence floor
-        if len(v_ratio) < T_m:
-            v_ratio_full = np.pad(v_ratio, (0, T_m - len(v_ratio)), mode="edge")
-        else:
-            v_ratio_full = v_ratio[:T_m]
-        v_smooth = np.convolve(v_ratio_full, np.ones(5)/5.0, mode="same")
-        
-        unvoiced_prob = 1.0 / (1.0 + np.exp((v_smooth - (-0.15)) * 8.0))
-        uv_t = torch.from_numpy(unvoiced_prob).float().unsqueeze(1).to(self.device)
-        
-        floor_tensor = torch.full_like(mel_prosodic[:, :16], -12.0)
-        mel_prosodic[:, :16] = mel_prosodic[:, :16] * (1.0 - uv_t) + floor_tensor * uv_t
-        
+        # [3] Neural Vocos Decoding (pristine phase, smooth transitions without hard step gate or phase tear)
         with torch.no_grad():
-            raw_audio = self.vocos.decode(mel_prosodic.transpose(0, 1).unsqueeze(0))[0].squeeze(0).cpu().numpy()
+            raw_audio = self.vocos.decode(mel_clean.transpose(0, 1).unsqueeze(0))[0].squeeze(0).cpu().numpy()
             
         full_out = self.apply_mastering_dsp(raw_audio)
         
-        # [5] Smooth silence gating based on input energy
-        hop_g = 256
+        # [4] Dynamic energy silence gating to ensure silent breath pauses
         win_g = 512
+        hop_g = 256
         rms_env = [np.sqrt(np.mean(y_24k[i:i+win_g]**2)) if len(y_24k[i:i+win_g]) > 0 else 0.0 for i in range(0, len(y_24k), hop_g)]
         gate_f = np.clip((np.array(rms_env) - 0.002) / (0.006 - 0.002), 0.0, 1.0)
         gate_s = np.repeat(gate_f, hop_g)[:len(full_out)]
