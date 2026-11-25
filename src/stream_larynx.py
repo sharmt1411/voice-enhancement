@@ -67,12 +67,21 @@ class StreamingArtificialLarynx:
 
     def process_audio_chunk(self, chunk_waveform_np, sr=24000):
         """
-        Process a single streaming chunk of input audio.
+        Process a single streaming chunk of input audio with adaptive energy gating.
         Returns: (output_audio_np, latency_seconds, rtf)
         """
         t0 = time.time()
-        chunk_t = torch.from_numpy(chunk_waveform_np).float().unsqueeze(0).to(self.device)
         dur_s = len(chunk_waveform_np) / sr
+        
+        # Adaptive Energy Gate / VAD to keep inter-sentence pauses dead quiet
+        rms = float(np.sqrt(np.mean(chunk_waveform_np**2)))
+        gate = float(np.clip((rms - 0.0035) / 0.007, 0.0, 1.0))
+        
+        if gate < 0.01:
+            expected_samples = int(len(chunk_waveform_np) * 24000 / sr)
+            return np.zeros(expected_samples, dtype=np.float32), time.time() - t0, 0.0
+            
+        chunk_t = torch.from_numpy(chunk_waveform_np).float().unsqueeze(0).to(self.device)
         
         # Resample to 16k for WavLM and 24k for Vocos
         r16 = self.resamplers_16k.get(sr)
@@ -111,11 +120,14 @@ class StreamingArtificialLarynx:
             out_audio = self.vocos.decode(out_mel.transpose(0, 1).unsqueeze(0))[0].squeeze(0)
             
         out_np = out_audio.cpu().numpy()
+        if gate < 1.0:
+            out_np = out_np * gate
+            
         latency_s = time.time() - t0
         rtf = latency_s / max(dur_s, 1e-4)
         return out_np, latency_s, rtf
 
-    def process_file_streaming(self, input_wav_path, output_wav_path, chunk_len_ms=500, overlap_ms=50):
+    def process_file_streaming(self, input_wav_path, output_wav_path, chunk_len_ms=400, overlap_ms=50):
         """
         Simulate real-time chunk streaming conversion over a file with Hanning Overlap-Add.
         """
@@ -184,4 +196,4 @@ class StreamingArtificialLarynx:
         """
         Convert full audio file in streaming chunks.
         """
-        return self.process_file_streaming(input_wav_path, output_wav_path, chunk_len_ms=500)[:2]
+        return self.process_file_streaming(input_wav_path, output_wav_path, chunk_len_ms=400)[:2]
